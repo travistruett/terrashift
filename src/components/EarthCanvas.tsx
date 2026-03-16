@@ -33,10 +33,12 @@ export default function EarthCanvas() {
     const threshold = e.nativeEvent.pointerType === "touch" ? 10 : 5;
     if (dist > threshold) return; // Was a drag, not a click
 
-    // Convert intersection point on sphere to lat/lng (normalize for safety)
+    // Convert intersection point on sphere to lat/lng (normalize for safety).
+    // Three.js SphereGeometry vertex mapping: x = -cos(phi)*sin(theta), z = sin(phi)*sin(theta)
+    // so longitude = atan2(-z, x) to undo the texture orientation.
     const p = e.point.clone().normalize();
     const rawLat = Math.asin(p.y) * (180 / Math.PI);
-    const rawLng = Math.atan2(p.x, p.z) * (180 / Math.PI);
+    const rawLng = Math.atan2(-p.z, p.x) * (180 / Math.PI);
 
     const lat = snapToGrid(rawLat);
     const lng = snapToGrid(rawLng);
@@ -75,10 +77,10 @@ export default function EarthCanvas() {
           enablePan={false}
           minDistance={1.15}
           maxDistance={6}
-          rotateSpeed={0.5}
-          zoomSpeed={0.3}
+          rotateSpeed={0.3}
+          zoomSpeed={0.2}
           enableDamping
-          dampingFactor={0.08}
+          dampingFactor={0.05}
         />
       </Canvas>
       <Loader />

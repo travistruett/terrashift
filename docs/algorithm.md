@@ -270,6 +270,84 @@ Simple Lambertian diffuse + ambient:
 float light = 0.25 + max(dot(normal, lightDir), 0.0) * 0.75;
 ```
 
+### 6. Snowfall Projection Model
+
+**Location:** `src/components/SnowfallPanel.tsx` (client-side projection), `src/actions/snowfall.ts` (server-side data fetch)
+
+Click any point on the globe to see projected snowfall based on the current temperature setting. The baseline comes from ERA5 reanalysis; the projection is computed client-side so it updates instantly when the temperature slider moves.
+
+#### 6.1 Data Source
+
+- **API:** Open-Meteo Historical Weather API (ERA5 reanalysis, ECMWF)
+- **Resolution:** 0.25 degree (~25 km) grid
+- **Baseline period:** 1991-2020 (WMO 30-year climate normal)
+- **Variables:** `snowfall_sum` (cm/day), `temperature_2m_mean` (°C)
+- **Aggregation:** Annual average snowfall = total snowfall over 30 years / 30. Mean winter temperature = average of Dec/Jan/Feb (NH) or Jun/Jul/Aug (SH).
+
+#### 6.2 Snow Fraction Formula
+
+Determines what fraction of precipitation falls as snow based on near-surface temperature:
+
+```
+snowFraction(T) = clamp((1.5 - T) / 3.0, 0, 1)
+```
+
+- T < -1.5°C: 100% snow
+- T > +1.5°C: 0% snow (all rain)
+- Linear transition between -1.5°C and +1.5°C
+
+Based on O'Gorman (2014) and Krasting et al. (2013).
+
+#### 6.3 Clausius-Clapeyron Moisture Scaling
+
+Warmer air holds more water vapor, increasing total precipitation. Asymmetric rates for warming vs cooling:
+
+```
+moistureFactor(dT) = exp(rate * dT)
+  where rate = 0.07 for warming (dT > 0)
+              0.02 for cooling (dT < 0)
+```
+
+**Warming (7%/°C):** Full Clausius-Clapeyron. Moisture increase is the secondary driver of snowfall change (snow fraction transition dominates).
+
+**Cooling (2%/°C net):** The raw CC moisture decrease (~7%/°C) is largely offset by snow season extension into shoulder months (~5%/°C) that the DJF-only baseline doesn't capture. Without this asymmetry, the model incorrectly predicts large snowfall decreases from cooling in cold locations (e.g. Wisconsin at -3°C showed -21% instead of a near-neutral change).
+
+Exponential form used instead of linear (1 + 0.07*dT) because the linear version goes negative for cooling beyond ~14°C.
+
+#### 6.4 Combined Projection
+
+```
+baselineFrac  = snowFraction(meanWinterTempC)
+projectedFrac = snowFraction(meanWinterTempC + tempDiff)
+projected     = baseline * (projectedFrac / baselineFrac) * moistureFactor(tempDiff)
+```
+
+#### 6.5 Edge Cases
+
+| Condition | Handling |
+|-----------|----------|
+| `baselineFrac < 0.01` | Projected = 0 (tropical, avoids float blowup) |
+| `projectedFrac = 0` | Projected = 0 (warmed past snow threshold) |
+| `baselineSnowfallCm < 0.1` | Display "Trace / negligible snowfall" |
+| Negative tempDiff (cooling) | Works symmetrically — fraction increases |
+| Ocean click | Shows ERA5 reanalysis for ocean grid cell |
+
+#### 6.6 Limitations
+
+- ERA5 is ~25 km — snowfall varies at finer scales in mountains
+- No local elevation adjustment beyond what ERA5 captures per grid cell
+- Uses DJF/JJA only — misses transitional month snowfall (Oct/Nov, Mar/Apr)
+- Linear snow fraction is an approximation of a slightly non-linear real transition
+- No orographic effects (rain shadow, lake effect)
+- Rate limited to 10,000 Open-Meteo requests/day (each click = 1 request)
+
+#### 6.7 Sources
+
+- O'Gorman, P.A. (2014). "Contrasting responses of mean and extreme snowfall to climate change." *Nature*, 512, 416-418.
+- Krasting, J.P., et al. (2013). "Future Changes in Northern Hemisphere Snowfall." *Journal of Climate*, 26(20), 7813-7828.
+- Held, I.M. & Soden, B.J. (2006). "Robust responses of the hydrological cycle to global warming." *Journal of Climate*, 19(21), 5686-5699.
+- Open-Meteo Historical Weather API — ERA5 reanalysis (ECMWF), 0.25°, global, 1940-present.
+
 ---
 
 ## Iteration History
@@ -325,6 +403,12 @@ A running log of approaches tried, what worked, and what didn't.
 | Custom CSS → Mantine primitives | Inconsistent styling, too much custom code |
 | Added Collapse + useDisclosure | Panel took up too much space |
 | Ice mass: absolute Gt → % change | "796.4K Gt" is meaningless to users |
+
+### Snowfall Projection Iterations
+
+| Version | Approach | Result |
+|---------|----------|--------|
+| v1 | Snow-fraction + Clausius-Clapeyron, Open-Meteo 30yr baseline | Initial implementation. Linear snow fraction, +7%/°C moisture. Edge cases handled for tropical/trace/threshold crossover. |
 
 ---
 

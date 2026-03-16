@@ -32,6 +32,7 @@ export default function Interface() {
   const { tempDiff, timeFrame, slr, setTempDiff, setTimeFrame } =
     useClimateStore();
   const [opened, { toggle }] = useDisclosure(true);
+  const [methodOpen, { toggle: toggleMethod }] = useDisclosure(false);
 
   const timeSliderValue = yearsToSlider(timeFrame);
   const slrColor = slr > 0 ? "red.4" : slr < 0 ? "blue.4" : "dimmed";
@@ -137,6 +138,41 @@ export default function Interface() {
               </Text>
             </Group>
           </Stack>
+
+          <Group justify="space-between" align="center" style={{ cursor: "pointer" }} onClick={toggleMethod}>
+            <Text size="xs" c="dimmed">Methodology</Text>
+            <ActionIcon variant="subtle" color="gray" size="xs" aria-label="Toggle methodology">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  transform: methodOpen ? "rotate(0deg)" : "rotate(180deg)",
+                  transition: "transform 200ms ease",
+                }}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </ActionIcon>
+          </Group>
+          <Collapse in={methodOpen}>
+            <Stack gap={6}>
+              <Text size="xs" c="dimmed" lh={1.5}>
+                <Text span fw={600}>Sea Level:</Text> Multi-component model with thermal expansion (0.5m/°C,
+                τ=200yr), Greenland (7.4m, τ=3kyr), West Antarctic (5m, τ=800yr), and East Antarctic
+                (53m, τ=10kyr) ice sheets. Tipping points modeled via sigmoid activation.
+              </Text>
+              <Text size="xs" c="dimmed" lh={1.5}>
+                <Text span fw={600}>Ice Mass:</Text> Approximated from sea level change — 362,000 km³ of water
+                per meter of SLR, against 26.5 million km³ total land ice.
+              </Text>
+            </Stack>
+          </Collapse>
         </Stack>
       </Collapse>
     </Card>
