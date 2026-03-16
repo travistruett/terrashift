@@ -100,16 +100,16 @@ const fragmentShader = /* glsl */ `
     float iceThreshold;
     if (landRes > 0.008) {
       // Land ice (Greenland, Antarctica): resilience = how much warming to melt
-      iceThreshold = landRes * ${LAND_RES_SCALE};
+      iceThreshold = landRes * ${LAND_RES_SCALE.toFixed(1)};
     } else if (seaConc > 0.06) {
       // Sea ice (HadISST): concentration-proportional resilience
-      iceThreshold = seaConc * ${SEA_ICE_RES_SCALE};
+      iceThreshold = seaConc * ${SEA_ICE_RES_SCALE.toFixed(1)};
     } else {
       // Non-ice pixel: threshold from distance + terrain + latitude
-      float dist_km = distNorm * distNorm * ${MAX_DIST_KM};  // undo sqrt encoding
+      float dist_km = distNorm * distNorm * ${MAX_DIST_KM.toFixed(1)};  // undo sqrt encoding
       float lat = abs(0.5 - vUv.y) * 180.0;
-      float elev_m = iceElev * ${MAX_ELEV_M};
-      float growthRate = ${GROWTH_BASE} + ${GROWTH_LAT} * pow(lat / 90.0, 1.2) + ${GROWTH_ELEV} * elev_m;
+      float elev_m = iceElev * ${MAX_ELEV_M.toFixed(1)};
+      float growthRate = ${GROWTH_BASE.toFixed(1)} + ${GROWTH_LAT.toFixed(1)} * pow(lat / 90.0, 1.2) + ${GROWTH_ELEV.toFixed(1)} * elev_m;
       iceThreshold = -(dist_km / growthRate);
     }
 
