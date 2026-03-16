@@ -40,17 +40,50 @@ SnowfallPanel (Mantine Card) reads:
 | `src/components/SnowfallPanel.tsx` | `'use client'` | Mantine Card with LoadingOverlay, projection display |
 | `src/components/EarthCanvas.tsx` | Modified | Adds raycasting click handler |
 | `src/components/RealisticEarth.tsx` | Modified | Renders marker pin at selected point, exposes onClick |
+| `src/app/page.tsx` | Modified | Adds `<SnowfallPanel />` to the page layout |
 
 ### Data Flow
 
-1. **Click**: User clicks the globe. `RealisticEarth` mesh `onClick` fires with Three.js intersection event.
-2. **Raycast to coords**: Convert intersection point on unit sphere to `{ lat, lng }` using `atan2`/`asin` math.
-3. **Store update**: Write `{ lat, lng, loading: true }` to `SnowfallStore`.
-4. **Server action**: `SnowfallPanel` calls `fetchSnowfallBaseline(lat, lng)` — a Next.js 16 server action in a `'use server'` file.
-5. **API call**: Server action fetches 30 years (1991-01-01 to 2020-12-31) of daily `snowfall_sum` and `temperature_2m_mean` from Open-Meteo Historical Weather API.
+1. **Click vs. drag**: Record pointer position on `onPointerDown`. On `onPointerUp`, if the pointer moved less than 5px, treat it as a click. Otherwise, ignore (it was an orbit drag). This prevents every orbit rotation from triggering a snowfall lookup.
+2. **Raycast to coords**: Convert Three.js intersection point on the unit sphere to geographic coordinates:
+   ```ts
+   const { x, y, z } = intersection.point;
+   const lat = Math.asin(y) * (180 / Math.PI);
+   const lng = Math.atan2(x, z) * (180 / Math.PI);
+   ```
+   (Assumes default Three.js `SphereGeometry` orientation: Y-up, equator at y=0.)
+3. **Grid-cell dedup**: Round lat/lng to nearest 0.25 degrees (one ERA5 grid cell). If the rounded coords match the current selection, skip the fetch — reuse cached baseline.
+4. **Store update + fetch**: The click handler calls `snowfallStore.fetchBaseline(lat, lng)`, which sets `{ lat, lng, loading: true }` and calls the server action. The store action increments a `requestId` counter; when the response arrives, it checks that the `requestId` still matches before writing results. This prevents race conditions from rapid clicks.
+5. **Server action**: `fetchSnowfallBaseline(lat, lng)` — a Next.js 16 server action in a `'use server'` file — fetches 30 years (1991-01-01 to 2020-12-31) of daily `snowfall_sum` and `temperature_2m_mean` from Open-Meteo Historical Weather API.
 6. **Aggregation**: Server-side computes annual average snowfall (cm) and mean winter temperature (Dec/Jan/Feb for Northern Hemisphere, Jun/Jul/Aug for Southern).
-7. **Store result**: Baseline data written to store, `loading: false`.
+7. **Store result**: Baseline data written to store, `loading: false`. On API error or timeout (10s), sets `error` message instead.
 8. **Projection**: Client-side derived value recomputes whenever `tempDiff` changes (no re-fetch).
+
+## Zustand Store: `SnowfallStore`
+
+```typescript
+// src/stores/snowfall.ts
+interface SnowfallState {
+  /** Selected point (null = no selection) */
+  lat: number | null;
+  lng: number | null;
+  /** Baseline data from server action */
+  baselineSnowfallCm: number;
+  meanWinterTempC: number;
+  /** UI state */
+  loading: boolean;
+  error: string | null;
+  /** Race condition guard — incremented on each fetch */
+  requestId: number;
+  /** Actions */
+  fetchBaseline: (lat: number, lng: number) => Promise<void>;
+  clear: () => void;
+}
+```
+
+The `fetchBaseline` action: sets loading state, increments `requestId`, calls the server action, then checks `requestId` matches before writing results. `clear` resets everything to initial state (removes pin + panel).
+
+Projection is NOT stored — it is computed inline in `SnowfallPanel` from `baselineSnowfallCm`, `meanWinterTempC`, and `tempDiff` (read from `ClimateStore`). This keeps the store minimal and avoids cross-store subscriptions in setters.
 
 ## Server Action: `fetchSnowfallBaseline`
 
@@ -73,7 +106,9 @@ export async function fetchSnowfallBaseline(
   // Endpoint: https://archive-api.open-meteo.com/v1/archive
   // Params: latitude, longitude, start_date=1991-01-01, end_date=2020-12-31
   // Daily variables: snowfall_sum, temperature_2m_mean
+  // Timeout: 10 seconds (AbortController)
   // Aggregate server-side into annual snowfall avg + winter temp avg
+  // Throws on network error or non-200 response
 }
 ```
 
@@ -124,10 +159,12 @@ projectedSnowfall = baselineSnowfallCm * (projectedFraction / baselineFraction) 
 
 | Condition | Handling |
 |-----------|----------|
-| `baselineFraction ~ 0` (tropical, no snow) | Projected stays 0 — skip division |
+| `baselineFraction < 0.01` (tropical, no snow) | Projected = 0 — skip division entirely to avoid float blowup |
 | `projectedFraction = 0` (warmed past threshold) | Projected = 0 regardless of moisture |
+| `baselineSnowfallCm < 0.1` (negligible snow) | Show "Trace / negligible snowfall" instead of numbers |
 | Negative `tempDiff` (cooling) | Works symmetrically — more snow from fraction increase |
 | Ocean click (no meaningful snowfall station) | Show result anyway — Open-Meteo returns ERA5 reanalysis for ocean grid cells |
+| API error or timeout | Show error message in panel: "Could not fetch data. Try again." with retry button |
 
 ### Sources
 
@@ -168,10 +205,19 @@ Position: bottom-right corner (opposite existing Interface panel at bottom-left)
 
 ### Globe Marker
 
-- Small sphere or sprite rendered on the globe surface at the selected lat/lng
-- Subtle white/accent color, does not compete with climate visualization
-- Position derived from snowfall store `{ lat, lng }`
-- Disappears when snowfall selection is cleared
+- `<mesh>` with `<sphereGeometry args={[0.008, 16, 16]} />` as a sibling to `RealisticEarth` inside `EarthCanvas`
+- Positioned at radius 1.005 (slightly above globe surface to avoid z-fighting):
+  ```ts
+  const phi = lat * (Math.PI / 180);
+  const theta = lng * (Math.PI / 180);
+  const r = 1.005;
+  const x = r * Math.cos(phi) * Math.sin(theta);
+  const y = r * Math.sin(phi);
+  const z = r * Math.cos(phi) * Math.cos(theta);
+  ```
+- Subtle white/accent emissive material so it's visible regardless of lighting
+- Position reads from snowfall store `{ lat, lng }`
+- Disappears when snowfall selection is cleared (store `lat` is null)
 
 ### Dismiss Controls
 
@@ -189,6 +235,20 @@ Content to add to `docs/algorithm.md`:
 - Sub-sections: Snow Fraction Formula, Moisture Scaling, Data Source (Open-Meteo), Baseline Period, Limitations
 - Sources with full citations
 - Iteration history table (following existing pattern)
+
+## Responsive / Mobile
+
+- **Touch**: Same pointer-down/pointer-up distance gate works for touch. Use a 10px threshold instead of 5px (touch is less precise).
+- **Narrow viewports** (< 768px): `SnowfallPanel` stacks above `Interface` panel (both bottom-left) rather than side-by-side. Use Mantine `useMediaQuery` or CSS `@media` to switch positioning.
+- **Panel width**: 340px (slightly narrower than Interface's 360px to fit comfortably).
+
+## Coordinate Display Format
+
+Convert signed decimal degrees to human-readable N/S/E/W:
+```ts
+const latStr = `${Math.abs(lat).toFixed(1)}°${lat >= 0 ? 'N' : 'S'}`;
+const lngStr = `${Math.abs(lng).toFixed(1)}°${lng >= 0 ? 'E' : 'W'}`;
+```
 
 ## Constraints & Limitations
 
