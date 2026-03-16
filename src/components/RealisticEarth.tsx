@@ -2,6 +2,7 @@
 
 import { useRef, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
+import type { ThreeEvent } from "@react-three/fiber";
 import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { useClimateStore } from "@/stores/climate";
@@ -146,7 +147,12 @@ const fragmentShader = /* glsl */ `
   }
 `;
 
-export default function RealisticEarth() {
+interface RealisticEarthProps {
+  onPointerDown?: (e: ThreeEvent<PointerEvent>) => void;
+  onPointerUp?: (e: ThreeEvent<PointerEvent>) => void;
+}
+
+export default function RealisticEarth({ onPointerDown, onPointerUp }: RealisticEarthProps) {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
 
   const [colorMap, dem, ice] = useTexture([
@@ -179,7 +185,7 @@ export default function RealisticEarth() {
   });
 
   return (
-    <mesh>
+    <mesh onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
       <sphereGeometry args={[1, 128, 128]} />
       <shaderMaterial
         ref={materialRef}

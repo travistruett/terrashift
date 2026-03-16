@@ -1,11 +1,53 @@
 "use client";
 
+import { useRef } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Loader } from "@react-three/drei";
 import { Suspense } from "react";
+import type { ThreeEvent } from "@react-three/fiber";
 import RealisticEarth from "./RealisticEarth";
+import GlobeMarker from "./GlobeMarker";
+import { useSnowfallStore } from "@/stores/snowfall";
+
+/** Round to nearest 0.25 degrees (one ERA5 grid cell) */
+function snapToGrid(value: number): number {
+  return Math.round(value * 4) / 4;
+}
 
 export default function EarthCanvas() {
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
+
+  function handlePointerDown(e: ThreeEvent<PointerEvent>) {
+    pointerDownPos.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+  }
+
+  function handlePointerUp(e: ThreeEvent<PointerEvent>) {
+    if (!pointerDownPos.current) return;
+
+    const dx = e.nativeEvent.clientX - pointerDownPos.current.x;
+    const dy = e.nativeEvent.clientY - pointerDownPos.current.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    pointerDownPos.current = null;
+
+    // Touch is less precise — use 10px threshold vs 5px for mouse
+    const threshold = e.nativeEvent.pointerType === "touch" ? 10 : 5;
+    if (dist > threshold) return; // Was a drag, not a click
+
+    // Convert intersection point on sphere to lat/lng (normalize for safety)
+    const p = e.point.clone().normalize();
+    const rawLat = Math.asin(p.y) * (180 / Math.PI);
+    const rawLng = Math.atan2(p.x, p.z) * (180 / Math.PI);
+
+    const lat = snapToGrid(rawLat);
+    const lng = snapToGrid(rawLng);
+
+    // Dedup: skip if same grid cell is already selected
+    const store = useSnowfallStore.getState();
+    if (store.lat === lat && store.lng === lng) return;
+
+    store.fetchBaseline(lat, lng);
+  }
+
   return (
     <>
       <Canvas
@@ -22,7 +64,11 @@ export default function EarthCanvas() {
         <ambientLight intensity={0.3} />
         <directionalLight position={[5, 3, 5]} intensity={1.5} />
         <Suspense fallback={null}>
-          <RealisticEarth />
+          <RealisticEarth
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+          />
+          <GlobeMarker />
         </Suspense>
         <OrbitControls
           enableZoom
