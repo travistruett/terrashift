@@ -39,7 +39,7 @@ export default function Interface() {
 
   return (
     <Card
-      shadow="xl"
+      shadow="md"
       p="lg"
       radius="md"
       pos="absolute"
@@ -75,7 +75,7 @@ export default function Interface() {
       </Group>
 
       <Collapse in={opened}>
-        <Stack gap="md">
+        <Stack gap="lg">
           <Box>
             <Group justify="space-between" mb={4}>
               <Text size="sm" fw={500}>Temperature</Text>
@@ -124,7 +124,7 @@ export default function Interface() {
             />
           </Box>
 
-          <Stack gap={6} bg="dark.7" p="sm" style={{ borderRadius: "var(--mantine-radius-sm)" }}>
+          <Stack gap={6} bg="dark.9" p="md" style={{ borderRadius: "var(--mantine-radius-sm)" }}>
             <Group justify="space-between">
               <Text size="sm" c="dimmed">Sea Level</Text>
               <Text size="sm" fw={600} c={slrColor}>

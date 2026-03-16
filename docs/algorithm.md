@@ -82,7 +82,7 @@ Instead of pre-computing a threshold (which creates 8-bit banding at 0.31°C/ste
 
 **Location:** `src/stores/climate.ts` → `calculateSLR()`
 
-Four physical components, each with exponential time response:
+Five physical components (split per Levermann et al. 2013), each with exponential time response:
 
 ```
 SLR = sign(ΔT) × Σᵢ [ sensitivityᵢ(|ΔT|) × (1 - e^(-t/τᵢ)) ]
@@ -90,20 +90,23 @@ SLR = sign(ΔT) × Σᵢ [ sensitivityᵢ(|ΔT|) × (1 - e^(-t/τᵢ)) ]
 
 | Component | Equilibrium Sensitivity | τ (years) | Activation | Notes |
 |-----------|------------------------|-----------|------------|-------|
-| Thermal expansion + mountain glaciers | 0.5 m/°C (linear) | 200 | None | Fast, modest |
+| Thermal expansion | 0.42 m/°C (linear) | 200 | None | Ocean heat uptake |
+| Mountain glaciers | 0.34 m/°C (linear), **capped at 0.5m** | 150 | None | Finite alpine ice inventory (~0.41m SLE) |
 | Greenland Ice Sheet | 7.4 m (total) | 3,000 | Sigmoid at 1.5°C | Tipping point behavior |
 | West Antarctic Ice Sheet (WAIS) | 5.0 m (total) | 800 | Sigmoid at 3.0°C | Fastest major ice sheet |
 | East Antarctic Ice Sheet (EAIS) | 53.0 m (total) | 10,000 | Sigmoid at 8.0°C | Slow, enormous |
+
+**Mountain glacier cap:** The equilibrium contribution is `min(0.34 × |ΔT|, 0.5)` — at ~1.5°C all mountain glaciers are committed to melt, and further warming cannot add more (there is no more alpine ice to lose). The 0.5m cap reflects the total global alpine ice inventory.
 
 **Sigmoid activation:** `σ(x) = 1 / (1 + e^(-(x - threshold) / steepness))`
 
 This models tipping points — below the threshold, the ice sheet barely responds; above it, collapse accelerates. The sigmoid ensures smooth transitions.
 
 **Example outputs:**
-- +2°C, 100yr → ~0.3m (thermal + early Greenland)
-- +2°C, 3000yr → ~5.4m (thermal + most of Greenland + some WAIS)
+- +2°C, 100yr → ~0.6m (thermal + glaciers + early Greenland)
+- +2°C, 3000yr → ~5.5m (thermal + glaciers + most of Greenland + some WAIS)
 - +10°C, 10000yr → ~56m (everything)
-- -6°C, 3000yr → ~-5.4m (sea level drop from ice growth)
+- -6°C, 3000yr → ~-5.5m (sea level drop from ice growth)
 
 ### 3. Ice Temperature Model
 
@@ -276,75 +279,101 @@ float light = 0.25 + max(dot(normal, lightDir), 0.0) * 0.75;
 
 Click any point on the globe to see projected snowfall based on the current temperature setting. The baseline comes from ERA5 reanalysis; the projection is computed client-side so it updates instantly when the temperature slider moves.
 
-#### 6.1 Data Source
+#### 6.1 Architecture: Server Bins + Client Projection
+
+The model splits computation between server and client:
+
+**Server** (`src/actions/snowfall.ts`): Fetches 30 years of daily `precipitation_sum` and `temperature_2m_mean` from Open-Meteo. Bins total precipitation into 1°C-wide temperature bins (70 bins from -40°C to +29°C). Returns the annual-average precipitation per bin (`precipDist[]`). Uses ALL days of the year (not just winter months) — the bins naturally capture which temperatures produce precipitation.
+
+**Client** (`src/components/SnowfallPanel.tsx`): Iterates over the bins, applies temperature shift + moisture scaling + snow fraction, and sums to get projected snowfall. Runs in <1ms, so it updates instantly on slider drag.
+
+This architecture solves the v1 model's core problems: it preserves the full daily temperature distribution instead of collapsing to a single mean, which eliminates the warm-margin problem, the "Wisconsin cooling paradox," and the DJF-only limitation.
+
+#### 6.2 Data Source
 
 - **API:** Open-Meteo Historical Weather API (ERA5 reanalysis, ECMWF)
 - **Resolution:** 0.25 degree (~25 km) grid
 - **Baseline period:** 1991-2020 (WMO 30-year climate normal)
-- **Variables:** `snowfall_sum` (cm/day), `temperature_2m_mean` (°C)
-- **Aggregation:** Annual average snowfall = total snowfall over 30 years / 30. Mean winter temperature = average of Dec/Jan/Feb (NH) or Jun/Jul/Aug (SH).
+- **Variables:** `precipitation_sum` (mm/day), `snowfall_sum` (cm/day), `temperature_2m_mean` (°C)
+- **Binning:** Each day's `precipitation_sum` is added to the 1°C bin matching its daily mean temperature. Totals are divided by 30 years to get annual averages.
+- **Observed baseline:** `snowfall_sum` is summed and divided by 30 for accurate baseline display (the logistic model overestimates baseline at warm-margin locations)
 
-#### 6.2 Snow Fraction Formula
+#### 6.3 Snow Fraction: Logistic Function
 
-Determines what fraction of precipitation falls as snow based on near-surface temperature:
-
-```
-snowFraction(T) = clamp((1.5 - T) / 3.0, 0, 1)
-```
-
-- T < -1.5°C: 100% snow
-- T > +1.5°C: 0% snow (all rain)
-- Linear transition between -1.5°C and +1.5°C
-
-Based on O'Gorman (2014) and Krasting et al. (2013).
-
-#### 6.3 Clausius-Clapeyron Moisture Scaling
-
-Warmer air holds more water vapor, increasing total precipitation. Asymmetric rates for warming vs cooling:
+Determines what fraction of precipitation falls as snow (Jennings et al. 2018):
 
 ```
-moistureFactor(dT) = exp(rate * dT)
-  where rate = 0.07 for warming (dT > 0)
-              0.02 for cooling (dT < 0)
+snowFraction(T) = 1 / (1 + exp(1.5 × (T - 1.0)))
 ```
 
-**Warming (7%/°C):** Full Clausius-Clapeyron. Moisture increase is the secondary driver of snowfall change (snow fraction transition dominates).
+- T50 = 1.0°C — temperature where rain and snow are equally likely (hemispheric mean from 17.8 million observations)
+- Steepness a = 1.5 — observationally validated S-curve transition
+- At -2°C: ~98% snow. At +4°C: ~1% snow.
 
-**Cooling (2%/°C net):** The raw CC moisture decrease (~7%/°C) is largely offset by snow season extension into shoulder months (~5%/°C) that the DJF-only baseline doesn't capture. Without this asymmetry, the model incorrectly predicts large snowfall decreases from cooling in cold locations (e.g. Wisconsin at -3°C showed -21% instead of a near-neutral change).
+Replaces the v1 linear threshold. The logistic form is a much better fit to the real rain-snow transition and eliminates the hard cutoff artifacts.
 
-Exponential form used instead of linear (1 + 0.07*dT) because the linear version goes negative for cooling beyond ~14°C.
+#### 6.4 Clausius-Clapeyron Moisture Scaling
 
-#### 6.4 Combined Projection
+Atmospheric moisture capacity scales exponentially with temperature (O'Gorman 2014):
 
 ```
-baselineFrac  = snowFraction(meanWinterTempC)
-projectedFrac = snowFraction(meanWinterTempC + tempDiff)
-projected     = baseline * (projectedFrac / baselineFrac) * moistureFactor(tempDiff)
+ccScale = exp(0.06 × ΔT)
 ```
 
-#### 6.5 Edge Cases
+Rate b ≈ 0.06/°C (thermodynamic rate for extratropical precipitation extremes). Applied uniformly — no asymmetric warming/cooling rates needed because the bin-based approach naturally captures shoulder-month snow extension (bins that were above freezing shift below it).
+
+#### 6.5 Combined Projection (Calibrated Ratio)
+
+For each temperature bin i:
+
+```
+T_shifted = T_bin + ΔT
+P_scaled  = P_bin × exp(0.06 × ΔT)
+snow_i    = P_scaled × snowFraction(T_shifted)
+
+modelSnow(ΔT) = Σ snow_i
+```
+
+The model computes a **ratio** rather than absolute values:
+
+```
+changeRatio    = modelSnow(ΔT) / modelSnow(0)
+projectedSnow  = observedBaseline × changeRatio
+```
+
+Where `observedBaseline` is the ERA5 `snowfall_sum` annual average (accurate real-world data). The model's physics drives the direction and magnitude of change; the observed baseline anchors it to reality. This avoids the logistic function's systematic overestimation at warm-margin locations (e.g., Atlanta: model says 12cm, ERA5 observes 4cm).
+
+#### 6.6 Counterintuitive Result Detection
+
+The UI displays contextual HoverCards when results would confuse a layperson:
+
+| Condition | Explanation shown |
+|-----------|-------------------|
+| ΔT < -3 AND change < -10% | **Moisture starvation** — very cold air holds far less moisture; Antarctica's interior is one of the driest places on Earth despite extreme cold |
+| ΔT > +0.5 AND change > +5% | **Moisture wins** — most precipitation already falls below freezing, so +7%/°C moisture increase outpaces the rain/snow shift. Reverses at higher warming. |
+
+#### 6.7 Edge Cases
 
 | Condition | Handling |
 |-----------|----------|
-| `baselineFrac < 0.01` | Projected = 0 (tropical, avoids float blowup) |
-| `projectedFrac = 0` | Projected = 0 (warmed past snow threshold) |
-| `baselineSnowfallCm < 0.1` | Display "Trace / negligible snowfall" |
-| Negative tempDiff (cooling) | Works symmetrically — fraction increases |
+| `precipDist` empty (loading) | Panel shows loading overlay |
+| Computed baseline < 0.1 cm | Display "Trace / negligible snowfall" |
 | Ocean click | Shows ERA5 reanalysis for ocean grid cell |
+| Extreme cooling (e.g. -30°C) | Moisture starvation naturally reduces snowfall; HoverCard explains |
 
-#### 6.6 Limitations
+#### 6.8 Limitations
 
 - ERA5 is ~25 km — snowfall varies at finer scales in mountains
 - No local elevation adjustment beyond what ERA5 captures per grid cell
-- Uses DJF/JJA only — misses transitional month snowfall (Oct/Nov, Mar/Apr)
-- Linear snow fraction is an approximation of a slightly non-linear real transition
-- No orographic effects (rain shadow, lake effect)
+- Logistic function uses dry-bulb temperature only; incorporating wet-bulb (humidity) would improve accuracy in arid regions but requires additional data
+- Shifting bins by ΔT assumes climate change shifts the mean without altering variance or skewness (Arctic amplification changes both)
+- CC scaling is purely thermodynamic — cannot predict dynamic synoptic shifts (storm track changes, ENSO)
 - Rate limited to 10,000 Open-Meteo requests/day (each click = 1 request)
 
-#### 6.7 Sources
+#### 6.9 Sources
 
+- Jennings, K.S., et al. (2018). "Spatial variation of the rain-snow temperature threshold across the Northern Hemisphere." *Nature Communications*, 9, 1148.
 - O'Gorman, P.A. (2014). "Contrasting responses of mean and extreme snowfall to climate change." *Nature*, 512, 416-418.
-- Krasting, J.P., et al. (2013). "Future Changes in Northern Hemisphere Snowfall." *Journal of Climate*, 26(20), 7813-7828.
 - Held, I.M. & Soden, B.J. (2006). "Robust responses of the hydrological cycle to global warming." *Journal of Climate*, 19(21), 5686-5699.
 - Open-Meteo Historical Weather API — ERA5 reanalysis (ECMWF), 0.25°, global, 1940-present.
 
@@ -404,11 +433,19 @@ A running log of approaches tried, what worked, and what didn't.
 | Added Collapse + useDisclosure | Panel took up too much space |
 | Ice mass: absolute Gt → % change | "796.4K Gt" is meaningless to users |
 
+### SLR Model Iterations
+
+| Version | Change | Result |
+|---------|--------|--------|
+| v1 | Four-component (thermal+glaciers combined, Greenland, WAIS, EAIS) | Initial implementation |
+| v2 | Split thermal expansion (0.42m/°C) from mountain glaciers (0.34m/°C, capped 0.5m) | Per Levermann et al. 2013. Glaciers saturate at ~1.5°C; thermal continues scaling linearly. |
+
 ### Snowfall Projection Iterations
 
 | Version | Approach | Result |
 |---------|----------|--------|
 | v1 | Snow-fraction + Clausius-Clapeyron, Open-Meteo 30yr baseline | Initial implementation. Linear snow fraction, +7%/°C moisture. Edge cases handled for tropical/trace/threshold crossover. |
+| v2 | **Temperature-binned precipitation distribution** | Server bins 30yr daily precipitation by temperature (70 bins, 1°C). Client iterates bins with logistic snow fraction (Jennings 2018) + symmetric CC (6%/°C). Solves warm-margin, Wisconsin paradox, and DJF-only issues. Eliminates ad-hoc asymmetric moisture rates. |
 
 ---
 
@@ -462,7 +499,8 @@ Opacity ramp = smoothstep(0.0, 2.0, max(threshold, delta))
 
 ### SLR Constants (`climate.ts`)
 ```
-Thermal: 0.5 m/°C, τ=200yr
+Thermal expansion: 0.42 m/°C, τ=200yr
+Mountain glaciers: 0.34 m/°C, τ=150yr, capped at 0.5m total
 Greenland: 7.4m, τ=3000yr, sigmoid(1.5°C, steepness=1.0)
 WAIS: 5.0m, τ=800yr, sigmoid(3.0°C, steepness=1.5)
 EAIS: 53.0m, τ=10000yr, sigmoid(8.0°C, steepness=3.0)

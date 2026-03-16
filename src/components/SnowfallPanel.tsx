@@ -6,6 +6,7 @@ import {
   Card,
   Collapse,
   Group,
+  HoverCard,
   LoadingOverlay,
   Stack,
   Text,
@@ -15,16 +16,36 @@ import { useDisclosure, useMediaQuery } from "@mantine/hooks";
 import { useSnowfallStore } from "@/stores/snowfall";
 import { useClimateStore } from "@/stores/climate";
 
-function snowFraction(t: number): number {
-  return Math.max(0, Math.min(1, (1.5 - t) / 3.0));
+const BIN_MIN = -40;
+
+/**
+ * Logistic snow fraction (Jennings et al. 2018).
+ * T50 = 1.0°C (hemispheric mean), steepness a = 1.5.
+ * At -2°C: ~98% snow. At +4°C: ~1% snow. At 1°C: 50%.
+ */
+function snowFraction(T: number): number {
+  return 1 / (1 + Math.exp(1.5 * (T - 1.0)));
 }
 
-function moistureFactor(dT: number): number {
-  // Warming: full Clausius-Clapeyron at ~7%/°C (moisture is the secondary effect).
-  // Cooling: net ~2%/°C — the 7% moisture decrease is largely offset by snow season
-  // extension (~5%/°C) into shoulder months the model doesn't capture directly.
-  const rate = dT < 0 ? 0.02 : 0.07;
-  return Math.exp(rate * dT);
+/**
+ * Compute total annual snowfall (cm) from temperature-binned precipitation.
+ *
+ * For each 1°C bin:
+ *   1. Shift the bin temperature by deltaT
+ *   2. Scale precipitation by Clausius-Clapeyron (e^(0.06 * deltaT))
+ *   3. Apply logistic snow fraction at the shifted temperature
+ *   4. Sum across all bins
+ *
+ * precipitation_sum is in mm; 1mm precip ≈ 1cm snow depth.
+ */
+function computeSnowfall(precipDist: number[], deltaT: number): number {
+  const ccScale = Math.exp(0.06 * deltaT);
+  let total = 0;
+  for (let i = 0; i < precipDist.length; i++) {
+    const T_shifted = BIN_MIN + i + deltaT;
+    total += precipDist[i] * ccScale * snowFraction(T_shifted);
+  }
+  return total;
 }
 
 function formatCoord(lat: number, lng: number): string {
@@ -34,7 +55,7 @@ function formatCoord(lat: number, lng: number): string {
 }
 
 export default function SnowfallPanel() {
-  const { lat, lng, baselineSnowfallCm, meanWinterTempC, loading, error, clear, fetchBaseline } =
+  const { lat, lng, precipDist, baselineSnowfallCm, loading, error, clear, fetchBaseline } =
     useSnowfallStore();
   const tempDiff = useClimateStore((s) => s.tempDiff);
   const [methodOpen, { toggle: toggleMethod }] = useDisclosure(false);
@@ -42,42 +63,29 @@ export default function SnowfallPanel() {
 
   if (lat === null || lng === null) return null;
 
-  // Projection calculation
-  const baselineFrac = snowFraction(meanWinterTempC);
-  const projectedFrac = snowFraction(meanWinterTempC + tempDiff);
-  const moisture = moistureFactor(tempDiff);
+  // The model computes a ratio: how much does the physics change snowfall?
+  // We apply that ratio to the observed baseline (ERA5 snowfall_sum) for calibrated output.
+  const hasData = precipDist.length > 0;
+  const modelBaseline = hasData ? computeSnowfall(precipDist, 0) : 0;
+  const modelProjected = hasData ? computeSnowfall(precipDist, tempDiff) : 0;
+  const changeRatio = modelBaseline > 0 ? modelProjected / modelBaseline : 0;
+  const projectedSnowfallCm = baselineSnowfallCm * changeRatio;
 
   const isTrace = baselineSnowfallCm < 0.1;
-  // Only treat as "non-snow" when BOTH model fraction and observed snowfall are negligible.
-  // Warm-margin locations (mean winter temp > 1.5C) can still have real snow from cold events.
-  const isNonSnow = baselineFrac < 0.01 && baselineSnowfallCm < 0.1;
-  const isWarmMargin = baselineFrac < 0.01 && baselineSnowfallCm >= 0.1;
-
-  let projectedSnowfallCm = 0;
-  if (!isNonSnow && !isTrace) {
-    if (isWarmMargin) {
-      // Warm-margin: real snow exists but mean winter temp is above the model's
-      // snow fraction threshold. Snow comes from cold-event tails, so the fraction
-      // ratio method is unreliable. Scale by moisture only (conservative).
-      projectedSnowfallCm = baselineSnowfallCm * moisture;
-    } else {
-      projectedSnowfallCm =
-        projectedFrac === 0
-          ? 0
-          : baselineSnowfallCm * (projectedFrac / baselineFrac) * moisture;
-    }
-  }
 
   const changePct =
     baselineSnowfallCm > 0
       ? ((projectedSnowfallCm - baselineSnowfallCm) / baselineSnowfallCm) * 100
       : 0;
 
-  const projectedWinterTemp = meanWinterTempC + tempDiff;
+  // Counterintuitive: cooling but snowfall decreases (moisture starvation)
+  const isMoistureStarved = tempDiff < -3 && changePct < -10;
+  // Counterintuitive: moderate warming slightly increases snowfall
+  const isWarmingIncrease = tempDiff > 0.5 && changePct > 5;
 
   return (
     <Card
-      shadow="xl"
+      shadow="md"
       p="lg"
       radius="md"
       pos="absolute"
@@ -131,9 +139,9 @@ export default function SnowfallPanel() {
           </Button>
         </Stack>
       ) : (
-        <Stack gap="sm">
+        <Stack gap="lg">
           {isTrace ? (
-            <Text size="sm" c="dimmed" ta="center">
+            <Text size="sm" c="dimmed" fs="italic">
               Trace / negligible snowfall at this location
             </Text>
           ) : (
@@ -158,14 +166,49 @@ export default function SnowfallPanel() {
                 </Group>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">Change</Text>
-                  <Text
-                    size="sm"
-                    fw={600}
-                    c={changePct > 0 ? "blue.4" : changePct < 0 ? "red.4" : "dimmed"}
+                  <HoverCard
+                    width={280}
+                    shadow="md"
+                    position="left"
+                    disabled={!isMoistureStarved && !isWarmingIncrease}
                   >
-                    {changePct >= 0 ? "+" : ""}
-                    {changePct.toFixed(1)}%
-                  </Text>
+                    <HoverCard.Target>
+                      <Text
+                        size="sm"
+                        fw={600}
+                        c={changePct > 0 ? "blue.4" : changePct < 0 ? "red.4" : "dimmed"}
+                        style={(isMoistureStarved || isWarmingIncrease) ? {
+                          textDecoration: "underline dotted",
+                          cursor: "help",
+                        } : undefined}
+                      >
+                        {changePct >= 0 ? "+" : ""}
+                        {changePct.toFixed(1)}%
+                      </Text>
+                    </HoverCard.Target>
+                    <HoverCard.Dropdown
+                      style={{ backgroundColor: "rgba(26, 27, 30, 0.95)" }}
+                    >
+                      {isMoistureStarved && (
+                        <Text size="xs" c="dimmed" lh={1.5}>
+                          <Text span fw={600} c="yellow.5">Why does colder mean less snow?</Text>{" "}
+                          Very cold air holds far less moisture (Clausius-Clapeyron). Below a
+                          certain point, the atmosphere becomes too dry to produce heavy
+                          snowfall{"\u2014"}the same reason Antarctica{"'"}s interior is one of
+                          the driest places on Earth despite extreme cold.
+                        </Text>
+                      )}
+                      {isWarmingIncrease && (
+                        <Text size="xs" c="dimmed" lh={1.5}>
+                          <Text span fw={600} c="blue.4">Why does warming increase snow here?</Text>{" "}
+                          At this location, most precipitation already falls below
+                          freezing. Warmer air holds ~7% more moisture per degree, so total
+                          precipitation increases faster than the rain/snow boundary shifts.
+                          At higher warming the effect reverses as snow converts to rain.
+                        </Text>
+                      )}
+                    </HoverCard.Dropdown>
+                  </HoverCard>
                 </Group>
               </Stack>
 
@@ -179,31 +222,19 @@ export default function SnowfallPanel() {
                   Inputs
                 </Text>
                 <Group justify="space-between">
-                  <Text size="xs" c="dimmed">Winter Temp</Text>
+                  <Text size="xs" c="dimmed">Temperature shift</Text>
                   <Text size="xs">
-                    {meanWinterTempC.toFixed(1)}{"\u00B0"}C {"\u2192"} {projectedWinterTemp.toFixed(1)}{"\u00B0"}C
+                    {tempDiff >= 0 ? "+" : ""}{tempDiff.toFixed(1)}{"\u00B0"}C
                   </Text>
                 </Group>
                 <Group justify="space-between">
-                  <Text size="xs" c="dimmed">Precip as Snow</Text>
-                  <Text size="xs">
-                    {(baselineFrac * 100).toFixed(0)}% {"\u2192"} {(projectedFrac * 100).toFixed(0)}%
-                  </Text>
-                </Group>
-                <Group justify="space-between">
-                  <Text size="xs" c="dimmed">Moisture</Text>
+                  <Text size="xs" c="dimmed">Moisture scaling</Text>
                   <Text size="xs">
                     {tempDiff >= 0 ? "+" : ""}
-                    {((moisture - 1) * 100).toFixed(0)}%
+                    {((Math.exp(0.06 * tempDiff) - 1) * 100).toFixed(0)}%
                   </Text>
                 </Group>
               </Stack>
-
-              {isWarmMargin && (
-                <Text size="xs" c="yellow.6" lh={1.4}>
-                  Warm-margin location — mean winter temp above model threshold. Projection uses moisture scaling only.
-                </Text>
-              )}
             </>
           )}
 
@@ -230,9 +261,11 @@ export default function SnowfallPanel() {
           </Group>
           <Collapse in={methodOpen}>
             <Text size="xs" c="dimmed" lh={1.5}>
-              Snow fraction model: linear transition between -1.5°C (100% snow) and +1.5°C
-              (0% snow). Moisture scales at +7%/°C (Clausius-Clapeyron). Baseline: WMO 1991-2020
-              climate normal from ERA5 reanalysis (Open-Meteo).
+              30-year daily precipitation (1991{"\u2013"}2020) is binned by temperature in
+              1{"\u00B0"}C intervals. For each bin, the temperature is shifted by {"\u0394"}T, precipitation
+              is scaled by the Clausius-Clapeyron relation (+6%/{"\u00B0"}C), and a logistic
+              snow fraction determines the rain/snow split (T{"\u2085\u2080"} = 1{"\u00B0"}C,
+              per Jennings et al. 2018). Data from ERA5 reanalysis via Open-Meteo.
             </Text>
           </Collapse>
         </Stack>

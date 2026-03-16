@@ -15,19 +15,19 @@ function snapToGrid(value: number): number {
 }
 
 export default function EarthCanvas() {
-  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
+  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
 
   function handlePointerDown(e: ThreeEvent<PointerEvent>) {
-    pointerDownPos.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+    pointerDownRef.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
   }
 
   function handlePointerUp(e: ThreeEvent<PointerEvent>) {
-    if (!pointerDownPos.current) return;
+    if (!pointerDownRef.current) return;
 
-    const dx = e.nativeEvent.clientX - pointerDownPos.current.x;
-    const dy = e.nativeEvent.clientY - pointerDownPos.current.y;
+    const dx = e.nativeEvent.clientX - pointerDownRef.current.x;
+    const dy = e.nativeEvent.clientY - pointerDownRef.current.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    pointerDownPos.current = null;
+    pointerDownRef.current = null;
 
     // Touch is less precise — use 10px threshold vs 5px for mouse
     const threshold = e.nativeEvent.pointerType === "touch" ? 10 : 5;

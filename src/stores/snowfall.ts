@@ -4,8 +4,8 @@ import { fetchSnowfallBaseline } from "@/actions/snowfall";
 interface SnowfallState {
   lat: number | null;
   lng: number | null;
+  precipDist: number[];
   baselineSnowfallCm: number;
-  meanWinterTempC: number;
   loading: boolean;
   error: string | null;
   requestId: number;
@@ -16,8 +16,8 @@ interface SnowfallState {
 export const useSnowfallStore = create<SnowfallState>((set, get) => ({
   lat: null,
   lng: null,
+  precipDist: [],
   baselineSnowfallCm: 0,
-  meanWinterTempC: 0,
   loading: false,
   error: null,
   requestId: 0,
@@ -30,8 +30,8 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
       const result = await fetchSnowfallBaseline(lat, lng);
       if (get().requestId === id) {
         set({
+          precipDist: result.precipDist,
           baselineSnowfallCm: result.baselineSnowfallCm,
-          meanWinterTempC: result.meanWinterTempC,
           loading: false,
         });
       }
@@ -46,8 +46,8 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
     set((state) => ({
       lat: null,
       lng: null,
+      precipDist: [],
       baselineSnowfallCm: 0,
-      meanWinterTempC: 0,
       loading: false,
       error: null,
       requestId: state.requestId + 1,
