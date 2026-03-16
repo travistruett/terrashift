@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 import RealisticEarth from "./RealisticEarth";
 import GlobeMarker from "./GlobeMarker";
+import AtmosphereGlow from "./AtmosphereGlow";
 import { useSnowfallStore } from "@/stores/snowfall";
 
 /** Round to nearest 0.25 degrees (one ERA5 grid cell) */
@@ -71,6 +72,7 @@ export default function EarthCanvas() {
             onPointerUp={handlePointerUp}
           />
           <GlobeMarker />
+          <AtmosphereGlow />
         </Suspense>
         <OrbitControls
           enableZoom
