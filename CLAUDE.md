@@ -41,23 +41,35 @@ page.tsx (server) → EarthCanvas.tsx ("use client") → RealisticEarth.tsx
                   ↕ ClimateStore (Zustand) ↕
 ```
 
-- **ClimateStore** (`src/stores/climate.ts`): Zustand store with tempDiff, timeFrame, derived SLR
+- **ClimateStore** (`src/stores/climate.ts`): Zustand store with tempDiff, timeFrame, derived SLR + iceTemp
 - **SLR Model**: Multi-component with sigmoid-activated tipping points (thermal, Greenland, WAIS, EAIS)
+- **Ice Model**: Time-lagged two-component response (fast τ=50yr + slow τ=2000yr)
 - **RealisticEarth**: Custom GLSL ShaderMaterial reads DEM + ice textures, applies SLR flooding then ice overlay
 - **Interface**: Mantine sliders write to store; logarithmic scale for timeframe slider (10–10,000yr)
 - Shader uniforms updated every frame via `useFrame` + `useClimateStore.getState()` (no React re-renders)
 
 ## Textures
 
-- `public/textures/earth_color.jpg`: 16K (16384x8192) JPEG, NASA Blue Marble
-- `public/textures/earth_dem.png`: 16K (16384x8192) 8-bit grayscale, ±100m range
-- `public/textures/earth_ice.png`: 16K (16384x8192) 8-bit grayscale, ice threshold map
-- DEM encoding: pixel 0 = -100m, pixel 128 = sea level (0m), pixel 255 = +100m (0.78m/step)
-- Ice encoding: pixel 0 = -40°C, pixel 128 ≈ 0°C, pixel 255 = +40°C (threshold ΔT for ice coverage)
-- DEM source: GEBCO bathymetry data (10800x5400, upscaled to 16K)
-- Color source: NASA Blue Marble via h-schmidt.net (43200x21600, downscaled to 16K)
-- Ice source: generated from latitude model + paleoclimate-calibrated ice sheet zones
-- Regenerate: `scripts/.venv/bin/python scripts/process-color.py` / `process-dem.py` / `process-ice.py`
+- `public/textures/earth_color.jpg`: 16K JPEG, NASA Blue Marble
+- `public/textures/earth_dem.png`: 16K 8-bit grayscale, ±100m range (0.78m/step)
+- `public/textures/earth_ice.png`: 16K RGBA PNG (R=distance, G=land resilience, B=sea ice conc, A=elevation)
+- Ice texture stores raw ingredients; shader computes threshold per-pixel at float precision (no 8-bit banding)
+- Generated from: satellite ice detection + HadISST real sea ice data + distance transform + GEBCO elevation
+- Regenerate: `echo "y" | scripts/.venv/bin/python scripts/process-ice.py` (downloads GEBCO + HadISST, ~90s)
+
+## Algorithm Documentation
+
+**Full spec lives in [`docs/algorithm.md`](docs/algorithm.md)** — this is the source of truth for how all models work.
+
+When modifying any of the following, you MUST update `docs/algorithm.md` to match:
+- **SLR model** (`src/stores/climate.ts` → `calculateSLR`): update §2 "Sea Level Rise Model"
+- **Ice temperature model** (`src/stores/climate.ts` → `calculateIceTemp`): update §3 "Ice Temperature Model"
+- **Ice texture generation** (`scripts/process-ice.py`): update §4 "Ice Threshold Texture Generation"
+- **GLSL shader ice/flood logic** (`src/components/RealisticEarth.tsx`): update §5 "GLSL Fragment Shader"
+- **Tuning constants**: update the "Tuning Reference" section at the bottom
+- **Any new approach or rejected approach**: add to "Iteration History" section
+
+The iteration history in `docs/algorithm.md` tracks every approach we've tried and why it was accepted/rejected. **Always check this before proposing a new approach** to avoid re-trying something that already failed. When making changes, add a row to the relevant table (shader iterations, ice model versions, etc.) explaining what changed and why.
 
 ## Conventions
 
@@ -65,3 +77,4 @@ page.tsx (server) → EarthCanvas.tsx ("use client") → RealisticEarth.tsx
 - GLSL shaders: inline template strings in component files (not separate .glsl files)
 - Textures in `public/textures/`, served via Vercel CDN
 - Dependency versions are pinned (no `^` ranges) — update deliberately
+- Scripts use `scripts/.venv/` Python venv with Pillow, numpy, requests, scipy

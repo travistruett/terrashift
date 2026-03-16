@@ -5,27 +5,38 @@ import { useFrame } from "@react-three/fiber";
 import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import { useClimateStore } from "@/stores/climate";
+import {
+  MAX_DIST_KM,
+  MAX_ELEV_M,
+  LAND_RES_SCALE,
+  SEA_ICE_RES_SCALE,
+  GROWTH_BASE,
+  GROWTH_LAT,
+  GROWTH_ELEV,
+} from "@/constants/ice";
 
 /*
  * Shader architecture
  * ───────────────────
  *
- *  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
- *  │ color map   │  │  DEM map    │  │  ice map    │
- *  │ (satellite) │  │ (±100m 8-bit)│  │ (threshold) │
- *  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
- *         │                │                 │
- *         ▼                ▼                 ▼
- *   ┌───────────────────────────────────────────┐
- *   │           Fragment Shader                 │
- *   │                                           │
- *   │  1. elevation = dem × 200 - 100           │
- *   │  2. if elev < SLR → water color           │
- *   │     if elev < 0 & > SLR → exposed seabed  │
- *   │     else → satellite color                │
- *   │  3. if iceTemp < iceThreshold → ice        │
- *   │  4. apply lighting                        │
- *   └───────────────────────────────────────────┘
+ *  ┌─────────────┐  ┌─────────────┐  ┌──────────────────┐
+ *  │ color map   │  │  DEM map    │  │  ice map (RGBA)  │
+ *  │ (satellite) │  │ (±100m 8-bit)│  │ R=dist G=res     │
+ *  └──────┬──────┘  └──────┬──────┘  │ B=conc A=elev    │
+ *         │                │          └────────┬─────────┘
+ *         ▼                ▼                   ▼
+ *   ┌───────────────────────────────────────────────┐
+ *   │           Fragment Shader                     │
+ *   │                                               │
+ *   │  1. elevation = dem × 200 - 100               │
+ *   │  2. if elev < SLR → water color               │
+ *   │     if elev < 0 & > SLR → exposed seabed      │
+ *   │     else → satellite color                    │
+ *   │  3. decode RGBA → compute threshold per-pixel │
+ *   │     (float precision — no 8-bit banding)      │
+ *   │  4. if iceTemp < threshold → ice overlay      │
+ *   │  5. apply lighting                            │
+ *   └───────────────────────────────────────────────┘
  */
 
 const vertexShader = /* glsl */ `
@@ -77,21 +88,53 @@ const fragmentShader = /* glsl */ `
       color = baseColor;
     }
 
-    // ── Ice overlay ──
-    // Ice texture encodes threshold: pixel 0 = -40°C, pixel 255 = +40°C
-    float iceThreshold = texture2D(u_ice, vUv).r * 80.0 - 40.0;
-    float iceDelta = iceThreshold - u_iceTemp;
-    // Soft edge: blend over ~2°C range
-    float iceAmount = smoothstep(-0.5, 1.5, iceDelta);
+    // ── Ice overlay (RGBA per-pixel threshold — no 8-bit banding) ──
+    // Texture channels: R=distance, G=land resilience, B=sea ice conc, A=elevation
+    vec4 iceTex = texture2D(u_ice, vUv);
+    float distNorm = iceTex.r;     // sqrt-encoded distance from ice edge
+    float landRes  = iceTex.g;     // land ice resilience (0–1 → 0–${LAND_RES_SCALE}°C)
+    float seaConc  = iceTex.b;     // sea ice concentration (0–1)
+    float iceElev  = iceTex.a;     // terrain elevation (0–1 → 0–${MAX_ELEV_M}m)
 
-    if (iceAmount > 0.0) {
-      // Ice color: white with slight blue tint
-      vec3 iceColor = vec3(0.92, 0.95, 0.98);
-      float opacity = iceAmount * 0.9;
-      // Sea ice (over water) is slightly more translucent
-      if (depth > 0.0) {
-        opacity *= 0.75;
+    // Compute threshold per-pixel at float precision
+    float iceThreshold;
+    if (landRes > 0.008) {
+      // Land ice (Greenland, Antarctica): resilience = how much warming to melt
+      iceThreshold = landRes * ${LAND_RES_SCALE};
+    } else if (seaConc > 0.06) {
+      // Sea ice (HadISST): concentration-proportional resilience
+      iceThreshold = seaConc * ${SEA_ICE_RES_SCALE};
+    } else {
+      // Non-ice pixel: threshold from distance + terrain + latitude
+      float dist_km = distNorm * distNorm * ${MAX_DIST_KM};  // undo sqrt encoding
+      float lat = abs(0.5 - vUv.y) * 180.0;
+      float elev_m = iceElev * ${MAX_ELEV_M};
+      float growthRate = ${GROWTH_BASE} + ${GROWTH_LAT} * pow(lat / 90.0, 1.2) + ${GROWTH_ELEV} * elev_m;
+      iceThreshold = -(dist_km / growthRate);
+    }
+
+    float iceDelta = iceThreshold - u_iceTemp;
+
+    // Ice melt: reveal terrain under melting ice using bedrock elevation
+    if (iceThreshold > 0.3 && iceDelta < 0.0) {
+      float meltAmount = smoothstep(0.0, -5.0, iceDelta);
+      vec3 underIce;
+      if (elevation < 0.0) {
+        underIce = mix(shallowWater, deepWater, smoothstep(0.0, -30.0, elevation));
+      } else {
+        vec3 tundra = vec3(0.35, 0.42, 0.30);
+        vec3 rock = vec3(0.50, 0.46, 0.38);
+        underIce = mix(tundra, rock, smoothstep(10.0, 60.0, elevation));
       }
+      color = mix(color, underIce, meltAmount);
+    }
+
+    // Ice growth: white overlay with strength-based opacity
+    float iceAmount = smoothstep(-1.0, 2.0, iceDelta);
+    if (iceAmount > 0.0) {
+      vec3 iceColor = vec3(0.92, 0.95, 0.98);
+      float iceStrength = smoothstep(0.0, 2.0, max(iceThreshold, iceDelta));
+      float opacity = iceAmount * mix(0.55, 0.95, iceStrength);
       color = mix(color, iceColor, opacity);
     }
 

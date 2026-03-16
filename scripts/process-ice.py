@@ -32,6 +32,7 @@ Requires: pip install Pillow numpy requests scipy
 """
 
 import sys
+import gzip
 import tempfile
 from pathlib import Path
 
@@ -69,19 +70,21 @@ ICE_LAT_MIN = 55            # min |latitude| for general detection
 ICE_MOUNTAIN_BRIGHT = 210   # stricter brightness for mountain ice
 ICE_MOUNTAIN_ELEV = 3000    # min elevation (m) for mountain ice detection
 
-# Distance-based ice growth
-# At latitude φ, ice grows at: base_rate + lat_bonus * (|φ|/90)^1.2 km/°C
-# Plus elevation bonus: higher ground freezes faster
-GROWTH_BASE = 100           # km/°C at equator (very slow)
-GROWTH_LAT_BONUS = 500      # additional km/°C at pole
-GROWTH_ELEV_BONUS = 0.05    # km/°C per meter of elevation
-
 # Distance transform pixel scale
 # At 16K resolution: 360°/16384 ≈ 0.022° per pixel
 # At equator: 1° ≈ 111km, so 1 pixel ≈ 2.4km
 # At 60°: 1° lon ≈ 55km, so 1 pixel ≈ 1.2km
 # We use a single scale factor (equatorial) and adjust via growth rate
 PIXEL_KM = 111.0 * 360.0 / WIDTH  # ~2.44 km/pixel at equator
+
+# Real sea ice data (HadISST from UK Met Office)
+HADISST_URL = "https://www.metoffice.gov.uk/hadobs/hadisst/data/HadISST_ice.nc.gz"
+SEA_ICE_CONC_MIN = 0.15       # 15% minimum concentration (IPCC standard)
+
+# RGBA texture encoding ranges — must match src/constants/ice.ts
+MAX_DIST_KM = 8000.0          # R channel: sqrt(dist_km / MAX_DIST_KM)
+MAX_ELEV_M = 9000.0           # A channel: elevation / MAX_ELEV_M
+LAND_RES_SCALE = 10.0         # G channel: resilience / LAND_RES_SCALE
 
 
 def download_file(url: str, dest: Path, timeout: int = 120) -> bool:
@@ -111,6 +114,69 @@ def download_file(url: str, dest: Path, timeout: int = 120) -> bool:
 def temp_to_pixel(t):
     """Map temperature (-40 to +40°C) → pixel (0 to 255)."""
     return np.clip((t - TEMP_MIN) / (TEMP_MAX - TEMP_MIN) * 255, 0, 255).astype(np.uint8)
+
+
+def load_sea_ice(tmp_dir: str):
+    """Download HadISST and return September-mean sea ice concentration at 16K.
+
+    Returns numpy array (HEIGHT, WIDTH) with values 0-1, or None on failure.
+    HadISST: 1° lat/lon grid, NetCDF3 format (readable by scipy, no extra deps).
+    """
+    from scipy.io import netcdf_file
+
+    gz_path = Path(tmp_dir) / "hadisst_ice.nc.gz"
+    nc_path = Path(tmp_dir) / "hadisst_ice.nc"
+
+    print("\nDownloading HadISST sea ice concentration data...")
+    if not download_file(HADISST_URL, gz_path, timeout=180):
+        print("  WARNING: Failed to download. Will use formula-based sea ice.")
+        return None
+
+    print("Decompressing...")
+    with gzip.open(str(gz_path), "rb") as f_in:
+        with open(nc_path, "wb") as f_out:
+            f_out.write(f_in.read())
+
+    print("Parsing NetCDF...")
+    try:
+        with netcdf_file(str(nc_path), "r", mmap=False) as nc:
+            sic_var = nc.variables["sic"]  # (time, lat, lon)
+            n_times = sic_var.shape[0]
+            n_years = n_times // 12
+
+            # Average last 10 Septembers (month index 8, 0-indexed from Jan)
+            start_year = max(0, n_years - 10)
+            sept_idx = [y * 12 + 8 for y in range(start_year, n_years)]
+            print(f"  Averaging {len(sept_idx)} recent Septembers...")
+
+            sept = np.zeros((sic_var.shape[1], sic_var.shape[2]), dtype=np.float64)
+            for i in sept_idx:
+                sept += sic_var[i, :, :]
+            sept /= len(sept_idx)
+
+            # HadISST fill value is -1.0e+30; replace negatives with 0
+            sept = np.where(sept < 0, 0, sept).astype(np.float32)
+            sept = np.clip(sept, 0, 1.0)
+
+    except Exception as e:
+        print(f"  WARNING: Failed to parse NetCDF: {e}")
+        return None
+
+    # HadISST lons: 0.5..359.5 → shift to match our -180..180 grid
+    half = sept.shape[1] // 2
+    sept = np.roll(sept, half, axis=1)
+
+    # Resize to 16K using PIL (same approach as elevation)
+    src_h, src_w = sept.shape
+    print(f"  Resizing {src_w}x{src_h} → {WIDTH}x{HEIGHT}...")
+    ice_img = Image.fromarray(sept, mode="F")
+    ice_img = ice_img.resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
+    result = np.clip(np.array(ice_img, dtype=np.float32), 0, 1.0)
+
+    conc_pct = np.sum(result > SEA_ICE_CONC_MIN) / result.size * 100
+    print(f"  Sea ice coverage (>15%): {conc_pct:.1f}% of globe")
+
+    return result
 
 
 def main():
@@ -167,6 +233,7 @@ def main():
     elev_img = Image.fromarray(elevation_raw, mode="F")
     elev_img = elev_img.resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
     elevation = np.array(elev_img, dtype=np.float32)
+    is_ocean = elevation < 0
     del elevation_raw, elev_img
 
     # ── 3. Coordinate grids ──
@@ -209,6 +276,22 @@ def main():
             print(f"    {label}: {np.sum(is_ice & band) / n * 100:.1f}% ice")
 
     del brightness, saturation, r, g, b
+    satellite_ice = is_ice.copy()
+
+    # ── 4b. Load real sea ice concentration data ──
+    sea_ice_conc = None
+    with tempfile.TemporaryDirectory() as tmp_ice:
+        sea_ice_conc = load_sea_ice(tmp_ice)
+
+    if sea_ice_conc is not None:
+        has_sea_ice = (sea_ice_conc > SEA_ICE_CONC_MIN) & is_ocean
+        new_sea_ice = has_sea_ice & ~is_ice
+        print(f"  New sea ice pixels from HadISST: {np.sum(new_sea_ice) / is_ice.size * 100:.2f}%")
+        is_ice |= has_sea_ice
+        ice_pct = np.sum(is_ice) / is_ice.size * 100
+        print(f"  Total ice (satellite + HadISST): {ice_pct:.1f}%")
+    else:
+        print("  Using formula-based sea ice fallback.")
 
     # ── 5. Distance transform from ice edges ──
     print("\nComputing distance from ice edges...")
@@ -221,69 +304,85 @@ def main():
     print(f"  Max distance from ice: {dist_km.max():.0f} km")
     print(f"  Median non-ice distance: {np.median(dist_km[~is_ice]):.0f} km")
 
-    # ── 6. Compute thresholds ──
-    print("\nComputing thresholds...")
+    # ── 6. Encode RGBA channels ──
+    # Instead of pre-computing a threshold (which creates 8-bit banding),
+    # store raw ingredients and let the shader compute threshold at float precision.
+    #   R = sqrt-encoded distance from ice edge (more precision near edges)
+    #   G = land ice resilience (satellite-detected ice)
+    #   B = sea ice concentration (HadISST data)
+    #   A = terrain elevation above sea level (full range, not ±100m DEM)
+    print("\nEncoding RGBA ice texture...")
 
-    # Detected ice: latitude-based resilience (how much warming to melt)
+    # R: distance from ice edge, sqrt-encoded for precision near edges
+    # sqrt gives ~3km/step near edge vs ~35km/step far away
+    r_float = np.sqrt(np.clip(dist_km / MAX_DIST_KM, 0, 1))
+    r_channel = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+    r_channel[~is_ice] = np.clip(r_float[~is_ice] * 255, 0, 255).astype(np.uint8)
+
+    # G: land ice resilience (satellite-detected ice only)
     ice_resilience = np.clip(
         0.5 + 7.5 * np.maximum((abs_lat - 25) / 65, 0) ** 1.5,
         0.5, 8.0,
     )
+    g_channel = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+    g_channel[satellite_ice] = np.clip(
+        ice_resilience[satellite_ice] / LAND_RES_SCALE * 255, 1, 255
+    ).astype(np.uint8)
 
-    # Non-ice: threshold = -(distance / growth_rate)
-    # Growth rate increases with latitude (ice spreads faster at high latitudes)
-    # and with elevation (high ground freezes first)
-    growth_rate = (
-        GROWTH_BASE
-        + GROWTH_LAT_BONUS * (abs_lat / 90.0) ** 1.2
-        + GROWTH_ELEV_BONUS * np.maximum(elevation, 0)
-    )
-    # threshold = how much cooling needed = -(distance / rate)
-    non_ice_threshold = -(dist_km / growth_rate)
+    # B: sea ice concentration (HadISST, only for sea ice not already in satellite)
+    b_channel = np.zeros((HEIGHT, WIDTH), dtype=np.uint8)
+    if sea_ice_conc is not None:
+        sea_ice_only = has_sea_ice & ~satellite_ice
+        b_channel[sea_ice_only] = np.clip(
+            sea_ice_conc[sea_ice_only] * 255, 1, 255
+        ).astype(np.uint8)
 
-    # Combine: detected ice gets resilience, non-ice gets distance-based
-    threshold = np.where(is_ice, ice_resilience, non_ice_threshold)
+    # A: terrain elevation above sea level (full range, for growth rate in shader)
+    elev_above = np.clip(elevation, 0, MAX_ELEV_M)
+    a_channel = (elev_above / MAX_ELEV_M * 255).astype(np.uint8)
 
     # ── 7. Verification ──
     print("\nVerification:")
-    # Sample at specific lat/lon pairs
+
     def sample(lat, lon):
         row = int((90 - lat) / 180 * HEIGHT)
         col = int((lon + 180) / 360 * WIDTH) % WIDTH
         row = max(0, min(row, HEIGHT - 1))
         col = max(0, min(col, WIDTH - 1))
-        return float(threshold[row, col]), bool(is_ice[row, col])
+        d = float(dist_km[row, col])
+        g = float(g_channel[row, col]) / 255 * 10.0
+        b = float(b_channel[row, col]) / 255
+        a = float(a_channel[row, col]) / 255 * MAX_ELEV_M
+        return d, g, b, a, bool(is_ice[row, col])
 
     checks = [
         ("Greenland center (72°N, -40°W)", 72, -40, True),
         ("Antarctica center (-85°S, 0°E)", -85, 0, True),
+        ("Arctic Ocean (85°N, 0°E)",       85, 0, True),
+        ("Barents Sea (75°N, 40°E)",       75, 40, False),
         ("Rockies (40°N, -106°W)",         40, -106, False),
-        ("Siberia (60°N, 100°E)",          60, 100, False),
+        ("Andes (33°S, -70°W)",           -33, -70, False),
         ("Florida (27°N, -82°W)",          27, -82, False),
-        ("Great Lakes (44°N, -85°W)",      44, -85, False),
         ("Hudson Bay (60°N, -85°W)",       60, -85, False),
     ]
-    for label, lat, lon, expect_ice_now in checks:
-        t, detected = sample(lat, lon)
-        has_ice = t > 0
-        status = "✓" if has_ice == expect_ice_now else "✗"
-        d = float(dist_km[int((90-lat)/180*HEIGHT), int((lon+180)/360*WIDTH) % WIDTH])
-        print(f"  {status} {label}: thresh={t:+.1f}°C, detected={detected}, dist={d:.0f}km")
+    for label, lat, lon, expect_ice in checks:
+        d, g, b, a, detected = sample(lat, lon)
+        ice_type = "land" if g > 0 else "sea" if b > 0 else "none"
+        status = "✓" if detected == expect_ice else "✗"
+        print(f"  {status} {label}: dist={d:.0f}km, type={ice_type}, "
+              f"res={g:.1f}°C, conc={b:.0%}, elev={a:.0f}m")
 
-    # ── 8. Encode and save ──
-    print("\nEncoding to 8-bit...")
-    output = temp_to_pixel(threshold)
-
-    print(f"\nIce coverage at various temperatures:")
-    for t_check in [+5, +2, 0, -3, -6, -10, -20]:
-        pct = np.sum(threshold > t_check) / threshold.size * 100
-        print(f"  ΔT = {t_check:+3d}°C → {pct:5.1f}% of globe")
-
-    Image.fromarray(output).save(OUTPUT_PATH, "PNG", optimize=True)
+    # ── 8. Save RGBA PNG ──
+    print("\nSaving RGBA texture...")
+    output = np.stack([r_channel, g_channel, b_channel, a_channel], axis=2)
+    Image.fromarray(output, mode="RGBA").save(OUTPUT_PATH, "PNG", optimize=True)
     size_kb = OUTPUT_PATH.stat().st_size // 1024
     print(f"\nIce texture saved to: {OUTPUT_PATH}")
     print(f"  Size: {size_kb}KB")
     print(f"  Resolution: {WIDTH}x{HEIGHT}")
+    print(f"  Channels: R=distance, G=land_resilience, B=sea_ice, A=elevation")
+    print(f"  MAX_DIST_KM={MAX_DIST_KM}, MAX_ELEV_M={MAX_ELEV_M}")
+    print(f"  (Shader computes threshold per-pixel from these — no banding)")
 
 
 if __name__ == "__main__":
