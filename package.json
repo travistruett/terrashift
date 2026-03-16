@@ -1,0 +1,36 @@
+{
+  "name": "terrashift",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@mantine/charts": "8.3.17",
+    "@mantine/core": "8.3.17",
+    "@mantine/hooks": "8.3.17",
+    "@react-three/drei": "10.7.7",
+    "@react-three/fiber": "9.5.0",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "three": "0.183.2",
+    "zustand": "5.0.11"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/three": "0.183.1",
+    "babel-plugin-react-compiler": "1.0.0",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.1.6",
+    "postcss": "8.5.8",
+    "postcss-preset-mantine": "1.18.0",
+    "postcss-simple-vars": "7.0.1",
+    "typescript": "5.9.3"
+  }
+}
