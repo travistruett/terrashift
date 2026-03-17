@@ -104,9 +104,13 @@ export default function WeatherPanel() {
       ? ((projectedSnowfallCm - baselineSnowfallCm) / baselineSnowfallCm) * 100
       : 0;
 
-  // Precipitation projection (Clausius-Clapeyron)
+  // Precipitation projection
+  // Per-event CC rate (6%/°C) for snowfall bins; energy-budget rate (2%/°C) for
+  // total annual precip (Held & Soden 2006 — radiative cooling limits the
+  // hydrological cycle, so total precip scales much slower than column moisture).
   const ccScale = Math.exp(0.06 * tempDiff);
-  const projectedPrecipMm = totalPrecipMm * ccScale;
+  const precipScale = Math.exp(0.02 * tempDiff);
+  const projectedPrecipMm = totalPrecipMm * precipScale;
   const precipChangePct =
     totalPrecipMm > 0
       ? ((projectedPrecipMm - totalPrecipMm) / totalPrecipMm) * 100
@@ -196,11 +200,9 @@ export default function WeatherPanel() {
               </Text>
             </Row>
             {tempDiff !== 0 && (
-              <Group justify="flex-end">
-                <Text size="xs" c="dimmed">
-                  baseline {avgHighC.toFixed(1)}/{avgLowC.toFixed(1)}{"\u00B0"}C
-                </Text>
-              </Group>
+              <Text size="xs" c="dimmed">
+                baseline {avgHighC.toFixed(1)}/{avgLowC.toFixed(1)}{"\u00B0"}C
+              </Text>
             )}
           </MetricBlock>
 
@@ -307,12 +309,10 @@ export default function WeatherPanel() {
               {avgRH.toFixed(0)}%
             </Row>
             {tempDiff !== 0 && (
-              <Group justify="flex-end">
-                <Text size="xs" c="dimmed">
-                  RH stays ~constant; absolute moisture{" "}
-                  {tempDiff > 0 ? "+" : ""}{((ccScale - 1) * 100).toFixed(0)}%
-                </Text>
-              </Group>
+              <Text size="xs" c="dimmed">
+                RH stays ~constant; absolute moisture{" "}
+                {tempDiff > 0 ? "+" : ""}{((ccScale - 1) * 100).toFixed(0)}%
+              </Text>
             )}
           </MetricBlock>
 
@@ -342,8 +342,8 @@ export default function WeatherPanel() {
             <Stack gap={6}>
               <Text size="xs" c="dimmed" lh={1.5}>
                 30-year daily weather data (1991{"\u2013"}2020) from ERA5 reanalysis via Open-Meteo.
-                Temperature projections shift the baseline by {"\u0394"}T. Precipitation scales by
-                Clausius-Clapeyron (+6%/{"\u00B0"}C). Snowfall uses wet-bulb temperature binning with
+                Temperature projections shift the baseline by {"\u0394"}T. Precipitation scales at
+                +2%/{"\u00B0"}C (energy-budget constraint, Held {"\u0026"} Soden 2006). Snowfall uses wet-bulb temperature binning with
                 a logistic rain/snow split (T{"\u2085\u2080"} = 0.5{"\u00B0"}C, per Jennings et al. 2018).
                 Relative humidity stays approximately constant under warming; absolute moisture
                 increases ~6%/{"\u00B0"}C.
@@ -396,10 +396,12 @@ export default function WeatherPanel() {
 
               <Text size="sm" fw={600}>Precipitation</Text>
               <Text size="sm" c="dimmed" lh={1.6}>
-                Annual total precipitation scales by the Clausius-Clapeyron relation: warmer air
-                holds ~6% more moisture per degree. This is a robust thermodynamic response
-                (Held {"\u0026"} Soden 2006), though it cannot predict dynamic changes like
-                shifting storm tracks.
+                Annual total precipitation scales at ~2%/{"\u00B0"}C, not the full Clausius-Clapeyron
+                rate of ~6{"\u2013"}7%. While column water vapor scales at the CC rate, total
+                precipitation is constrained by the atmospheric energy budget{"\u2014"}the troposphere
+                can only radiate heat so fast, which limits the hydrological cycle (Held {"\u0026"}{" "}
+                Soden 2006). The snowfall model uses the full CC rate for per-event moisture
+                scaling, since individual storms can tap the full moisture column.
               </Text>
 
               <Text size="sm" fw={600}>Snowfall Model</Text>
