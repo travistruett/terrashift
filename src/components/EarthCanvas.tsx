@@ -2,7 +2,8 @@
 
 import { useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, Loader } from "@react-three/drei";
+import { OrbitControls } from "@react-three/drei";
+import LoadingScreen from "./LoadingScreen";
 import { Suspense } from "react";
 import { Vector3 } from "three";
 import type { ThreeEvent } from "@react-three/fiber";
@@ -123,7 +124,7 @@ export default function EarthCanvas() {
           dampingFactor={0.25}
         />
       </Canvas>
-      <Loader />
+      <LoadingScreen />
     </>
   );
 }

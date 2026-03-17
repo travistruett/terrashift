@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { MantineProvider, ColorSchemeScript } from "@mantine/core";
+import { Analytics } from "@vercel/analytics/next";
 import "@mantine/core/styles.css";
 import "./globals.css";
 
@@ -40,6 +41,7 @@ export default function RootLayout({
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
         <MantineProvider defaultColorScheme="dark">{children}</MantineProvider>
+        <Analytics />
       </body>
     </html>
   );

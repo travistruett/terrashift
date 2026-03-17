@@ -78,5 +78,5 @@ The iteration history in `docs/algorithm.md` tracks every approach we've tried a
 - React Compiler handles memoization; do NOT use `useMemo`/`useCallback` except for Three.js object stability
 - GLSL shaders: inline template strings in component files (not separate .glsl files)
 - Textures in `public/textures/`, served via Vercel CDN
-- Dependency versions are pinned (no `^` ranges) — update deliberately
+- Dependency versions are pinned (no `^` ranges) — always use exact versions when adding packages (`pnpm add --save-exact` or manually remove `^`)
 - Scripts use `scripts/.venv/` Python venv with Pillow, numpy, requests, scipy
