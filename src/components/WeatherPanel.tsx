@@ -130,11 +130,11 @@ export default function WeatherPanel() {
       p="lg"
       radius="md"
       pos="absolute"
-      bottom={narrow ? 200 : 24}
-      left={narrow ? 24 : undefined}
+      bottom={narrow ? "calc(55vh + 24px)" : 24}
+      left={narrow ? "5vw" : undefined}
       right={narrow ? undefined : 24}
-      w={340}
-      mah={narrow ? "calc(100vh - 240px)" : "calc(100vh - 48px)"}
+      w={narrow ? "90vw" : 340}
+      mah={narrow ? "calc(45vh - 36px)" : "calc(100vh - 48px)"}
       style={{
         zIndex: 10,
         backgroundColor: "rgba(26, 27, 30, 0.85)",

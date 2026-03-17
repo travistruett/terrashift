@@ -51,7 +51,7 @@ export default function LocationSearch() {
   }
 
   return (
-    <div style={{ position: "absolute", top: 24, left: 24, zIndex: 10, width: 320 }}>
+    <div style={{ position: "absolute", top: 12, left: "5vw", zIndex: 10, width: "90vw", maxWidth: 320 }}>
       <TextInput
         placeholder="Search location..."
         value={query}

@@ -44,16 +44,18 @@ export default function ClimatePanel() {
   return (
     <Card
       shadow="md"
-      p="lg"
+      p={{ base: "md", sm: "lg" }}
       radius="md"
       pos="absolute"
-      bottom={24}
-      left={24}
-      w={360}
+      bottom={{ base: 12, sm: 24 }}
+      left={{ base: "5vw", sm: 24 }}
+      w={{ base: "90vw", sm: 360 }}
+      mah={{ base: "55vh", sm: "calc(100vh - 48px)" }}
       style={{
         zIndex: 10,
         backgroundColor: "rgba(26, 27, 30, 0.85)",
         backdropFilter: "blur(10px)",
+        overflowY: "auto",
       }}
     >
       <Group justify="space-between" align="center" mb={opened ? "md" : 0}>
