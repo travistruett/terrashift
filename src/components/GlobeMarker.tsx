@@ -1,7 +1,13 @@
 "use client";
 
+import { useRef } from "react";
 import { Html } from "@react-three/drei";
+import { useFrame } from "@react-three/fiber";
+import { Vector3 } from "three";
 import { useSnowfallStore } from "@/stores/snowfall";
+
+const _markerDir = new Vector3();
+const _camDir = new Vector3();
 
 export default function GlobeMarker() {
   const lat = useSnowfallStore((s) => s.lat);
@@ -9,6 +15,19 @@ export default function GlobeMarker() {
   const loading = useSnowfallStore((s) => s.loading);
   const hasData = useSnowfallStore((s) => s.precipDist.length > 0);
   const hasError = useSnowfallStore((s) => s.error !== null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const posRef = useRef({ x: 0, y: 0, z: 0 });
+
+  // Hide marker when on the far side of the globe (no React re-renders)
+  useFrame(({ camera }) => {
+    if (!wrapperRef.current) return;
+    const p = posRef.current;
+    _markerDir.set(p.x, p.y, p.z).normalize();
+    _camDir.copy(camera.position).normalize();
+    const facing = _markerDir.dot(_camDir) > 0;
+    wrapperRef.current.style.opacity = facing ? "1" : "0";
+    wrapperRef.current.style.pointerEvents = facing ? "" : "none";
+  });
 
   if (lat === null || lng === null) return null;
 
@@ -20,6 +39,7 @@ export default function GlobeMarker() {
   const x = -r * Math.cos(alpha) * Math.sin(beta);
   const y = r * Math.cos(beta);
   const z = r * Math.sin(alpha) * Math.sin(beta);
+  posRef.current = { x, y, z };
 
   function handleFetch(e: React.MouseEvent) {
     e.stopPropagation();
@@ -28,7 +48,7 @@ export default function GlobeMarker() {
 
   return (
     <Html position={[x, y, z]} zIndexRange={[10, 0]} style={{ transform: "translate(-50%, -100%)" }}>
-      <div style={{ position: "relative", pointerEvents: "none" }}>
+      <div ref={wrapperRef} style={{ position: "relative", pointerEvents: "none", transition: "opacity 0.15s" }}>
         {/* Continuous stem — only shown with the flag button */}
         {showButton && (
           <div style={{ width: 2, height: 48, backgroundColor: "rgba(255, 255, 255, 0.7)", boxShadow: "var(--mantine-shadow-sm)" }} />

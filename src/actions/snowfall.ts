@@ -54,6 +54,7 @@ export async function fetchSnowfallBaseline(
   url.searchParams.set("start_date", "1991-01-01");
   url.searchParams.set("end_date", "2020-12-31");
   url.searchParams.set("daily", "precipitation_sum,snowfall_sum,temperature_2m_mean,relative_humidity_2m_mean");
+  url.searchParams.set("models", "best_match");
   url.searchParams.set("timezone", "auto");
 
   const controller = new AbortController();
