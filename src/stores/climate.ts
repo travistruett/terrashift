@@ -5,8 +5,10 @@ interface ClimateState {
   tempDiff: number;
   /** Timeframe in years (10 to 10,000) */
   timeFrame: number;
-  /** Derived sea level rise in meters */
+  /** Derived sea level rise in meters (total: thermal + ice) */
   slr: number;
+  /** SLR from ice loss only (excludes thermal expansion) */
+  iceSLR: number;
   /** Time-lagged effective temperature for ice response */
   iceTemp: number;
   /** Sea ice season: 0 = September (minimum), 1 = March (maximum) */
@@ -45,7 +47,12 @@ function sigmoid(x: number, threshold: number, steepness: number): number {
  *
  * Range at ±40°C × 10,000yr ≈ ±66m (fits within ±100m DEM encoding).
  */
-function calculateSLR(tempDiff: number, timeFrame: number): number {
+interface SLRResult {
+  total: number;
+  ice: number;
+}
+
+function calculateSLR(tempDiff: number, timeFrame: number): SLRResult {
   const sign = Math.sign(tempDiff);
   const absT = Math.abs(tempDiff);
 
@@ -68,7 +75,8 @@ function calculateSLR(tempDiff: number, timeFrame: number): number {
   const eaisCommitted = 53.0 * sigmoid(absT, 8.0, 3.0);
   const eais = eaisCommitted * (1 - Math.exp(-timeFrame / 10000));
 
-  return sign * (thermal + glaciers + greenland + wais + eais);
+  const ice = sign * (glaciers + greenland + wais + eais);
+  return { total: sign * (thermal + glaciers + greenland + wais + eais), ice };
 }
 
 /**
@@ -93,19 +101,18 @@ export const useClimateStore = create<ClimateState>((set) => ({
   tempDiff: 0,
   timeFrame: 100,
   slr: 0,
+  iceSLR: 0,
   iceTemp: 0,
   seaSeason: 0,
   setTempDiff: (tempDiff) =>
-    set((state) => ({
-      tempDiff,
-      slr: calculateSLR(tempDiff, state.timeFrame),
-      iceTemp: calculateIceTemp(tempDiff, state.timeFrame),
-    })),
+    set((state) => {
+      const { total, ice } = calculateSLR(tempDiff, state.timeFrame);
+      return { tempDiff, slr: total, iceSLR: ice, iceTemp: calculateIceTemp(tempDiff, state.timeFrame) };
+    }),
   setTimeFrame: (timeFrame) =>
-    set((state) => ({
-      timeFrame,
-      slr: calculateSLR(state.tempDiff, timeFrame),
-      iceTemp: calculateIceTemp(state.tempDiff, timeFrame),
-    })),
+    set((state) => {
+      const { total, ice } = calculateSLR(state.tempDiff, timeFrame);
+      return { timeFrame, slr: total, iceSLR: ice, iceTemp: calculateIceTemp(state.tempDiff, timeFrame) };
+    }),
   setSeaSeason: (seaSeason) => set({ seaSeason }),
 }));

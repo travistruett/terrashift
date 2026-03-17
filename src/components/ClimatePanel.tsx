@@ -30,7 +30,7 @@ function formatIcePct(slr: number): string {
 }
 
 export default function ClimatePanel() {
-  const { tempDiff, timeFrame, slr, seaSeason, setTempDiff, setTimeFrame, setSeaSeason } =
+  const { tempDiff, timeFrame, slr, iceSLR, seaSeason, setTempDiff, setTimeFrame, setSeaSeason } =
     useClimateStore();
   const [opened, { toggle }] = useDisclosure(true);
   const [methodOpen, { toggle: toggleMethod }] = useDisclosure(false);
@@ -140,7 +140,7 @@ export default function ClimatePanel() {
             <Group justify="space-between" mt={4}>
               <Text size="sm" c="dimmed">Ice Mass</Text>
               <Text size="sm" fw={600} c={slrColor}>
-                {formatIcePct(slr)}
+                {formatIcePct(iceSLR)}
               </Text>
             </Group>
           </Stack>

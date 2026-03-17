@@ -91,9 +91,30 @@ const fragmentShader = /* glsl */ `
       color = baseColor;
     }
 
+    // ── Snow-line melt: remove baked-in mountain snow when warming ──
+    vec4 iceTex = texture2D(u_ice, vUv);
+    float fullElev = iceTex.a * ${MAX_ELEV_M.toFixed(1)};
+    float lat = abs(0.5 - vUv.y) * 180.0;
+
+    if (u_iceTemp > 0.0 && fullElev > 500.0) {
+      float brightness = dot(baseColor, vec3(0.299, 0.587, 0.114));
+      float maxC = max(baseColor.r, max(baseColor.g, baseColor.b));
+      float minC = min(baseColor.r, min(baseColor.g, baseColor.b));
+      float sat = maxC > 0.0 ? (maxC - minC) / maxC : 0.0;
+      float isSnowy = smoothstep(0.55, 0.75, brightness) * smoothstep(0.25, 0.10, sat);
+
+      if (isSnowy > 0.01) {
+        // Snowline rises ~150m per °C of warming, base varies by latitude
+        float currentSnowline = max(5000.0 - 80.0 * lat, 0.0);
+        float newSnowline = currentSnowline + u_iceTemp * 150.0;
+        float snowMelt = smoothstep(-300.0, 300.0, newSnowline - fullElev);
+        vec3 rock = vec3(0.50, 0.46, 0.38);
+        color = mix(color, rock, snowMelt * isSnowy);
+      }
+    }
+
     // ── Ice overlay (RGBA per-pixel threshold — no 8-bit banding) ──
     // Texture channels: R=distance, G=land resilience, B=sea ice conc, A=elevation
-    vec4 iceTex = texture2D(u_ice, vUv);
     float distNorm = iceTex.r;     // sqrt-encoded distance from ice edge
     float landRes  = iceTex.g;     // land ice resilience (0–1 → 0–${LAND_RES_SCALE}°C)
     float sepConc  = iceTex.b;     // September sea ice concentration (0–1)
@@ -112,11 +133,9 @@ const fragmentShader = /* glsl */ `
     } else {
       // Non-ice pixel: threshold from distance + elevation nucleation
       float dist_km = distNorm * distNorm * ${MAX_DIST_KM.toFixed(1)};
-      float lat = abs(0.5 - vUv.y) * 180.0;
-      float elev_m = iceElev * ${MAX_ELEV_M.toFixed(1)};
 
       // Distance-based spread from existing ice
-      float growthRate = ${GROWTH_BASE.toFixed(1)} + ${GROWTH_LAT.toFixed(1)} * pow(lat / 90.0, 1.2) + ${GROWTH_ELEV.toFixed(1)} * elev_m;
+      float growthRate = ${GROWTH_BASE.toFixed(1)} + ${GROWTH_LAT.toFixed(1)} * pow(lat / 90.0, 1.2) + ${GROWTH_ELEV.toFixed(1)} * fullElev;
       float distThreshold = -(dist_km / growthRate);
 
       // Ocean penalty: open water resists land-ice growth
@@ -128,9 +147,9 @@ const fragmentShader = /* glsl */ `
       // Elevation nucleation: mountains glaciate independently
       // Only above 1500m — sea-level ice comes from distance spread only
       float elevNucleation = -99.0;
-      if (elev_m > 1500.0) {
+      if (fullElev > 1500.0) {
         float latBonus = (lat / 90.0) * 3.0;
-        elevNucleation = (elev_m - 2500.0) / 2000.0 + latBonus - 3.0;
+        elevNucleation = (fullElev - 2500.0) / 2000.0 + latBonus - 3.0;
       }
 
       iceThreshold = max(distThreshold, elevNucleation);
