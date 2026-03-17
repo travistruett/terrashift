@@ -5,6 +5,17 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ['@mantine/core', '@mantine/hooks'],
   },
+  headers: async () => [
+    {
+      source: '/textures/:path*',
+      headers: [
+        {
+          key: 'Cache-Control',
+          value: 'public, max-age=31536000, immutable',
+        },
+      ],
+    },
+  ],
 };
 
 export default nextConfig;
