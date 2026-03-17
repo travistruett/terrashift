@@ -126,9 +126,12 @@ const fragmentShader = /* glsl */ `
       }
 
       // Elevation nucleation: mountains glaciate independently
-      // Rockies, Andes, Alps, Himalayas form their own glaciers
-      float latBonus = (lat / 90.0) * 3.0;
-      float elevNucleation = (elev_m - 2500.0) / 2000.0 + latBonus - 3.0;
+      // Only above 1500m — sea-level ice comes from distance spread only
+      float elevNucleation = -99.0;
+      if (elev_m > 1500.0) {
+        float latBonus = (lat / 90.0) * 3.0;
+        elevNucleation = (elev_m - 2500.0) / 2000.0 + latBonus - 3.0;
+      }
 
       iceThreshold = max(distThreshold, elevNucleation);
     }

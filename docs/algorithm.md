@@ -242,6 +242,8 @@ Key difference from previous approach: threshold is computed per-pixel using con
 - At pole: ~600 km/°C (fast)
 - At 5000m elevation: adds 1250 km/°C (mountains freeze much faster)
 
+**Elevation nucleation gate:** Only pixels above 1500m can nucleate ice independently via the elevation formula. Below 1500m, ice growth comes exclusively from distance-based spread from existing ice edges. This prevents the latitude bonus from creating spurious sea-level ice at low latitudes (e.g., tropical oceans icing over at -4°C).
+
 **Ice delta:** `iceDelta = iceThreshold - u_iceTemp`
 - Positive → ice is present
 - Negative → ice has melted
@@ -424,6 +426,7 @@ A running log of approaches tried, what worked, and what didn't.
 | Removed ocean opacity penalty | Dense pack ice was too translucent | Pack ice now solid white |
 | Replaced fract(sin()) dither with IGN | Visible moiré patterns when zoomed | Screen-space noise, no patterns |
 | Replaced 8-bit threshold read with RGBA per-pixel | 20+ iterations couldn't fix banding | Band-free transitions at float precision |
+| Gated elevNucleation behind 1500m minimum | Latitude bonus in elevNucleation gave sea-level thresholds everywhere, causing tropical oceans to ice over at -4°C. The `max(distThreshold, elevNucleation)` let elevNucleation override the correctly-negative distThreshold. | Sea-level ice only from distance-based spread; mountain glaciation preserved |
 
 ### UI Iterations
 
