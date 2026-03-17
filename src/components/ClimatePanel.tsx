@@ -131,7 +131,10 @@ export default function ClimatePanel() {
             <Group justify="space-between">
               <Text size="sm" c="dimmed">Sea Level</Text>
               <Text size="sm" fw={600} c={slrColor}>
-                {slr >= 0 ? "+" : ""}{slr.toFixed(2)}m ({(slr * 3.281).toFixed(1)}ft)
+                {slr >= 0 ? "+" : ""}{slr.toFixed(2)}m{" "}
+                <Text span size="xs" c="dimmed" fw={400}>
+                  ({(slr * 3.281).toFixed(1)}ft)
+                </Text>
               </Text>
             </Group>
             <Group justify="space-between" mt={4}>

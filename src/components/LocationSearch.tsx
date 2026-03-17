@@ -111,7 +111,7 @@ export default function LocationSearch() {
                 </Text>
               </UnstyledButton>
             ))}
-            <Text size="xs" c="dimmed" ta="right" px="xs" pt={4}>
+            <Text size="xs" c="dimmed" ta="right" px="xs" py={4}>
               OpenStreetMap
             </Text>
           </Stack>

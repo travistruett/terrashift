@@ -158,13 +158,19 @@ export default function SnowfallPanel() {
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">Baseline</Text>
                   <Text size="sm" fw={600}>
-                    {baselineSnowfallCm.toFixed(1)} cm/yr
+                    {baselineSnowfallCm.toFixed(1)} cm/yr{" "}
+                    <Text span size="xs" c="dimmed" fw={400}>
+                      ({(baselineSnowfallCm * 0.3937).toFixed(1)} in/yr)
+                    </Text>
                   </Text>
                 </Group>
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">Projected</Text>
                   <Text size="sm" fw={600}>
-                    {projectedSnowfallCm.toFixed(1)} cm/yr
+                    {projectedSnowfallCm.toFixed(1)} cm/yr{" "}
+                    <Text span size="xs" c="dimmed" fw={400}>
+                      ({(projectedSnowfallCm * 0.3937).toFixed(1)} in/yr)
+                    </Text>
                   </Text>
                 </Group>
                 <Group justify="space-between">
