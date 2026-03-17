@@ -14,28 +14,33 @@ const TEXTURE_KEYS = Object.keys(TEXTURE_LABELS);
 
 export default function LoadingScreen() {
   const { progress, item } = useProgress();
-  const [loadedItems, setLoadedItems] = useState<Set<string>>(new Set());
+  const loadedRef = useRef(new Set<string>());
+  const prevItemRef = useRef("");
   const [visible, setVisible] = useState(true);
   const [fadeOut, setFadeOut] = useState(false);
-  const prevItemRef = useRef("");
 
-  // Track which textures have finished loading
-  useEffect(() => {
-    if (prevItemRef.current && prevItemRef.current !== item) {
-      const finishedKey = TEXTURE_KEYS.find((k) =>
-        prevItemRef.current.includes(k),
-      );
-      if (finishedKey) {
-        setLoadedItems((prev) => new Set(prev).add(finishedKey));
-      }
+  // Track which textures finished — driven by useProgress re-renders, no setState needed
+  if (prevItemRef.current && prevItemRef.current !== item) {
+    const finishedKey = TEXTURE_KEYS.find((k) =>
+      prevItemRef.current.includes(k),
+    );
+    if (finishedKey) {
+      loadedRef.current = new Set(loadedRef.current).add(finishedKey);
     }
-    prevItemRef.current = item;
-  }, [item]);
+  }
+  prevItemRef.current = item;
 
-  // Mark all loaded when progress hits 100
+  if (progress >= 100) {
+    for (const key of TEXTURE_KEYS) {
+      loadedRef.current.add(key);
+    }
+  }
+
+  const loadedItems = loadedRef.current;
+
+  // Fade out when done
   useEffect(() => {
     if (progress >= 100) {
-      setLoadedItems(new Set(TEXTURE_KEYS));
       const fadeTimer = setTimeout(() => setFadeOut(true), 400);
       const hideTimer = setTimeout(() => setVisible(false), 1000);
       return () => {

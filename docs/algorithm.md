@@ -285,7 +285,7 @@ Click any point on the globe to see projected snowfall based on the current temp
 
 The model splits computation between server and client:
 
-**Server** (`src/actions/snowfall.ts`): Fetches 30 years of daily `precipitation_sum` and `temperature_2m_mean` from Open-Meteo. Bins total precipitation into 1°C-wide temperature bins (70 bins from -40°C to +29°C). Returns the annual-average precipitation per bin (`precipDist[]`). Uses ALL days of the year (not just winter months) — the bins naturally capture which temperatures produce precipitation.
+**Server** (`src/actions/snowfall.ts`): Fetches 30 years of daily `precipitation_sum`, `temperature_2m_mean`, and `relative_humidity_2m_mean` from Open-Meteo. Computes wet-bulb temperature per day via the Stull (2011) approximation. Bins total precipitation into 1°C-wide wet-bulb temperature bins (70 bins from -40°C to +29°C). Returns the annual-average precipitation per bin (`precipDist[]`). Uses ALL days of the year (not just winter months) — the bins naturally capture which temperatures produce precipitation.
 
 **Client** (`src/components/SnowfallPanel.tsx`): Iterates over the bins, applies temperature shift + moisture scaling + snow fraction, and sums to get projected snowfall. Runs in <1ms, so it updates instantly on slider drag.
 
@@ -296,23 +296,24 @@ This architecture solves the v1 model's core problems: it preserves the full dai
 - **API:** Open-Meteo Historical Weather API (ERA5 reanalysis, ECMWF)
 - **Resolution:** 0.25 degree (~25 km) grid
 - **Baseline period:** 1991-2020 (WMO 30-year climate normal)
-- **Variables:** `precipitation_sum` (mm/day), `snowfall_sum` (cm/day), `temperature_2m_mean` (°C)
-- **Binning:** Each day's `precipitation_sum` is added to the 1°C bin matching its daily mean temperature. Totals are divided by 30 years to get annual averages.
+- **Variables:** `precipitation_sum` (mm/day), `snowfall_sum` (cm/day), `temperature_2m_mean` (°C), `relative_humidity_2m_mean` (%)
+- **Wet-bulb computation:** Per-day wet-bulb temperature via Stull (2011) closed-form approximation (accurate ±0.3°C for RH 5–99%, T −20°C to +50°C)
+- **Binning:** Each day's `precipitation_sum` is added to the 1°C bin matching its daily mean wet-bulb temperature. Totals are divided by 30 years to get annual averages.
 - **Observed baseline:** `snowfall_sum` is summed and divided by 30 for accurate baseline display (the logistic model overestimates baseline at warm-margin locations)
 
-#### 6.3 Snow Fraction: Logistic Function
+#### 6.3 Snow Fraction: Logistic Function (Wet-Bulb)
 
-Determines what fraction of precipitation falls as snow (Jennings et al. 2018):
+Determines what fraction of precipitation falls as snow using wet-bulb temperature (Jennings et al. 2018):
 
 ```
-snowFraction(T) = 1 / (1 + exp(1.5 × (T - 1.0)))
+snowFraction(Tw) = 1 / (1 + exp(1.5 × (Tw - 0.5)))
 ```
 
-- T50 = 1.0°C — temperature where rain and snow are equally likely (hemispheric mean from 17.8 million observations)
+- T50 = 0.5°C wet-bulb — temperature where rain and snow are equally likely. Lower than the 1.0°C dry-bulb threshold because wet-bulb accounts for evaporative cooling.
 - Steepness a = 1.5 — observationally validated S-curve transition
-- At -2°C: ~98% snow. At +4°C: ~1% snow.
+- At -2°C: ~98% snow. At +3.5°C: ~1% snow.
 
-Replaces the v1 linear threshold. The logistic form is a much better fit to the real rain-snow transition and eliminates the hard cutoff artifacts.
+Using wet-bulb temperature improves rain/snow partitioning in dry continental climates where dry-bulb alone overestimates snowfall (cold but dry air has a wet-bulb temperature closer to its dry-bulb, while humid air near freezing has a larger dry/wet gap).
 
 #### 6.4 Clausius-Clapeyron Moisture Scaling
 
@@ -367,8 +368,8 @@ The UI displays contextual HoverCards when results would confuse a layperson:
 
 - ERA5 is ~25 km — snowfall varies at finer scales in mountains
 - No local elevation adjustment beyond what ERA5 captures per grid cell
-- Logistic function uses dry-bulb temperature only; incorporating wet-bulb (humidity) would improve accuracy in arid regions but requires additional data
 - Shifting bins by ΔT assumes climate change shifts the mean without altering variance or skewness (Arctic amplification changes both)
+- Wet-bulb approximation (Stull 2011) is accurate to ±0.3°C but degrades outside RH 5–99% and T −20°C to +50°C
 - CC scaling is purely thermodynamic — cannot predict dynamic synoptic shifts (storm track changes, ENSO)
 - Rate limited to 10,000 Open-Meteo requests/day (each click = 1 request)
 
@@ -377,6 +378,7 @@ The UI displays contextual HoverCards when results would confuse a layperson:
 - Jennings, K.S., et al. (2018). "Spatial variation of the rain-snow temperature threshold across the Northern Hemisphere." *Nature Communications*, 9, 1148.
 - O'Gorman, P.A. (2014). "Contrasting responses of mean and extreme snowfall to climate change." *Nature*, 512, 416-418.
 - Held, I.M. & Soden, B.J. (2006). "Robust responses of the hydrological cycle to global warming." *Journal of Climate*, 19(21), 5686-5699.
+- Stull, R. (2011). "Wet-Bulb Temperature from Relative Humidity and Air Temperature." *J. Appl. Meteor. Climatol.*, 50(11), 2267-2269.
 - Open-Meteo Historical Weather API — ERA5 reanalysis (ECMWF), 0.25°, global, 1940-present.
 
 ---
@@ -449,6 +451,7 @@ A running log of approaches tried, what worked, and what didn't.
 |---------|----------|--------|
 | v1 | Snow-fraction + Clausius-Clapeyron, Open-Meteo 30yr baseline | Initial implementation. Linear snow fraction, +7%/°C moisture. Edge cases handled for tropical/trace/threshold crossover. |
 | v2 | **Temperature-binned precipitation distribution** | Server bins 30yr daily precipitation by temperature (70 bins, 1°C). Client iterates bins with logistic snow fraction (Jennings 2018) + symmetric CC (6%/°C). Solves warm-margin, Wisconsin paradox, and DJF-only issues. Eliminates ad-hoc asymmetric moisture rates. |
+| v3 | **Wet-bulb temperature binning** | Server fetches `relative_humidity_2m_mean`, computes wet-bulb via Stull (2011), bins by wet-bulb instead of dry-bulb. Snow fraction T50 lowered from 1.0°C to 0.5°C (wet-bulb threshold). Improves rain/snow partitioning in dry continental climates where dry-bulb overestimates snowfall. |
 
 ---
 

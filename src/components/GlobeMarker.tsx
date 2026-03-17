@@ -27,7 +27,7 @@ export default function GlobeMarker() {
   }
 
   return (
-    <Html position={[x, y, z]} style={{ transform: "translate(-50%, -100%)" }}>
+    <Html position={[x, y, z]} zIndexRange={[10, 0]} style={{ transform: "translate(-50%, -100%)" }}>
       <div style={{ position: "relative", pointerEvents: "none" }}>
         {/* Continuous stem — only shown with the flag button */}
         {showButton && (
