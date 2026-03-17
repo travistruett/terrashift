@@ -34,10 +34,11 @@ import { TEXTURE_VERSION } from "@/constants/textures";
  *   │  2. if elev < SLR → water color               │
  *   │     if elev < 0 & > SLR → exposed seabed      │
  *   │     else → satellite color                    │
- *   │  3. decode RGBA → compute threshold per-pixel │
- *   │     (float precision — no 8-bit banding)      │
- *   │  4. if iceTemp < threshold → ice overlay      │
- *   │  5. apply lighting                            │
+ *   │  3. snow-line melt (mountain snow → rock)      │
+ *   │  4. ice melt (reveal terrain under melted ice) │
+ *   │  5. vegetation/biome shift (greening/drying)    │
+ *   │  6. ice growth (white overlay)                 │
+ *   │  7. apply lighting                            │
  *   └───────────────────────────────────────────────┘
  */
 
@@ -59,6 +60,7 @@ const fragmentShader = /* glsl */ `
   uniform sampler2D u_marchIce;
   uniform float u_slr;
   uniform float u_iceTemp;
+  uniform float u_vegTemp;
   uniform float u_seaSeason;
   uniform vec3 u_lightDir;
 
@@ -159,6 +161,7 @@ const fragmentShader = /* glsl */ `
     float iceDelta = iceThreshold - u_iceTemp;
 
     // Ice melt: reveal terrain under melting ice using bedrock elevation
+    // Runs BEFORE vegetation so plants can colonize revealed terrain
     if (iceThreshold > 0.3 && iceDelta < 0.0) {
       float meltAmount = smoothstep(0.0, -5.0, iceDelta);
       vec3 underIce;
@@ -172,7 +175,62 @@ const fragmentShader = /* glsl */ `
       color = mix(color, underIce, meltAmount);
     }
 
+    // ── Vegetation / biome shift ──
+    // Arctic greening (warming): high-latitude terrain shifts toward boreal green
+    // Subtropical drying (warming): mid-latitudes desaturate toward brown
+    // Both reverse when cooling
+    // Runs after ice melt (plants colonize revealed terrain) but before ice growth
+    if (abs(u_vegTemp) > 0.3 && elevation >= 0.0) {
+      float brightness = dot(color, vec3(0.299, 0.587, 0.114));
+      float maxC = max(color.r, max(color.g, color.b));
+      float minC = min(color.r, min(color.g, color.b));
+      float sat = maxC > 0.0 ? (maxC - minC) / maxC : 0.0;
+
+      if (u_vegTemp > 0.0) {
+        // Arctic greening: high latitude terrain → denser boreal green
+        // Treeline rises ~150m per °C warming (Körner & Paulsen 2004, lapse rate ~6.5°C/km)
+        float baseTreeline = mix(2500.0, 800.0, smoothstep(50.0, 72.0, lat));
+        float treeline = baseTreeline + u_vegTemp * 150.0;
+        // Elevation gradient: full greening well below treeline, fading to zero at treeline
+        float elevFactor = smoothstep(treeline, treeline - 500.0, fullElev);
+        float arcticZone = smoothstep(45.0, 55.0, lat) * elevFactor;
+        // Broad detection: non-snow land (snow already converted to rock by melt section above)
+        float isVegetable = smoothstep(0.90, 0.75, brightness) * smoothstep(0.05, 0.15, brightness);
+        float greenAmount = arcticZone * isVegetable * smoothstep(0.5, 3.0, u_vegTemp);
+        // Elevation-varied green: dark dense forest in valleys, lighter/sparser upslope
+        vec3 darkForest = vec3(0.08, 0.25, 0.06);
+        vec3 lightForest = vec3(0.22, 0.38, 0.18);
+        float elevGrad = smoothstep(0.0, treeline * 0.7, fullElev);
+        vec3 borealGreen = mix(darkForest, lightForest, elevGrad);
+        // Preserve satellite luminance variation for terrain relief
+        borealGreen *= (0.6 + brightness * 0.8);
+        color = mix(color, borealGreen, greenAmount * 0.70);
+
+        // Subtropical drying: Hadley cell expands ~0.5° lat per °C of warming
+        float dryUpperLat = min(38.0 + u_vegTemp * 0.5, 55.0);
+        float subtropZone = smoothstep(15.0, 22.0, lat) * smoothstep(dryUpperLat + 7.0, dryUpperLat, lat);
+        float isGreen = step(0.01, color.g - max(color.r, color.b) * 0.85);
+        float dryAmount = subtropZone * isGreen * smoothstep(1.5, 5.0, u_vegTemp);
+        // Drying target shifts from brown grassland to sandy desert at extreme temps
+        vec3 dryGrass = vec3(0.55, 0.48, 0.35);
+        vec3 desert = vec3(0.68, 0.58, 0.42);
+        vec3 dryLand = mix(dryGrass, desert, smoothstep(5.0, 20.0, u_vegTemp));
+        color = mix(color, dryLand, dryAmount * 0.75);
+      } else {
+        // Cooling: tundra expands equatorward
+        float absVeg = abs(u_vegTemp);
+
+        // Tundra/steppe expansion at lower latitudes
+        float tundraZone = smoothstep(55.0, 42.0, lat) * smoothstep(25.0, 35.0, lat);
+        float isGreenish = smoothstep(0.06, 0.15, sat);
+        float tundraAmount = tundraZone * isGreenish * smoothstep(0.8, 4.0, absVeg);
+        vec3 tundraBrown = vec3(0.40, 0.38, 0.30);
+        color = mix(color, tundraBrown, tundraAmount * 0.50);
+      }
+    }
+
     // Ice growth: white overlay with sharper edges and terrain-aware opacity
+    // Runs after vegetation so glaciation covers forests (physically correct)
     float iceAmount = smoothstep(-0.3, 0.8, iceDelta);
     if (iceAmount > 0.0) {
       vec3 iceColor = vec3(0.92, 0.95, 0.98);
@@ -224,6 +282,7 @@ export default function RealisticEarth({ onPointerDown, onPointerUp }: Realistic
       u_marchIce: { value: blackTex },
       u_slr: { value: 0 },
       u_iceTemp: { value: 0 },
+      u_vegTemp: { value: 0 },
       u_seaSeason: { value: 0 },
       u_lightDir: { value: new THREE.Vector3(5, 3, 5).normalize() },
     }),
@@ -236,6 +295,7 @@ export default function RealisticEarth({ onPointerDown, onPointerUp }: Realistic
     const state = useClimateStore.getState();
     materialRef.current.uniforms.u_slr.value = state.slr;
     materialRef.current.uniforms.u_iceTemp.value = state.iceTemp;
+    materialRef.current.uniforms.u_vegTemp.value = state.vegTemp;
     // Only transition to March once the texture is actually loaded
     materialRef.current.uniforms.u_seaSeason.value =
       state.seaSeason > 0 && marchTexRef.current ? state.seaSeason : 0;

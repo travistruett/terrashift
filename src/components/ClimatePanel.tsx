@@ -94,7 +94,7 @@ export default function ClimatePanel() {
               min={-40}
               max={40}
               domain={[-50, 50]}
-              step={0.1}
+              step={1}
               marks={[
                 { value: -40, label: "-40°C" },
                 { value: 0, label: "0" },
@@ -118,7 +118,7 @@ export default function ClimatePanel() {
               min={0}
               max={1000}
               domain={[-100, 1100]}
-              step={1}
+              step={10}
               label={(v) => `${sliderToYears(v).toLocaleString()}yr`}
               marks={[
                 { value: 0, label: "10yr" },
@@ -194,6 +194,10 @@ export default function ClimatePanel() {
               <Text size="xs" c="dimmed" lh={1.5}>
                 <Text span fw={600}>Ice Mass:</Text> Approximated from sea level change {"\u2014"} 362,000 km{"\u00B3"} of water
                 per meter of SLR, against 26.5 million km{"\u00B3"} total land ice.
+              </Text>
+              <Text size="xs" c="dimmed" lh={1.5}>
+                <Text span fw={600}>Vegetation:</Text> Biome shifts respond faster than ice ({"\u03C4"}{"\u2248"}30yr).
+                Warming greens Arctic tundra and dries subtropical zones; cooling reverses both.
               </Text>
               <Text
                 size="xs"
@@ -330,6 +334,22 @@ export default function ClimatePanel() {
                   </Table.Tr>
                 </Table.Tbody>
               </Table>
+
+              <Text size="sm" fw={600}>Vegetation / Biome Shift</Text>
+              <Text size="sm" c="dimmed" lh={1.6}>
+                Vegetation responds faster than ice but slower than weather. A separate time-lag
+                model ({"\u03C4"}=30yr fast, {"\u03C4"}=500yr slow) drives two visual effects:
+              </Text>
+              <Text size="sm" c="dimmed" lh={1.6}>
+                {"\u2022"} <Text span fw={500}>Arctic greening</Text> (warming): high-latitude tundra
+                shifts toward boreal green as shrubs and trees establish. Onset ~+1{"\u00B0"}C,
+                full effect ~+4{"\u00B0"}C. Gated by treeline elevation.{"\n"}
+                {"\u2022"} <Text span fw={500}>Subtropical drying</Text> (warming): mid-latitude
+                vegetation desaturates toward brown/tan as subtropical dry zones expand
+                (Hadley cell widening). Onset ~+2{"\u00B0"}C, full ~+6{"\u00B0"}C.{"\n"}
+                {"\u2022"} <Text span fw={500}>Cooling reversal</Text>: tundra expands equatorward
+                into formerly temperate zones.
+              </Text>
 
               <Text size="xs" c="dimmed" lh={1.5} mt="sm">
                 <Text span fw={600}>Reference:</Text> Levermann, A., et al. (2013). {"\u201C"}The multimillennial

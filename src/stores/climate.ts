@@ -11,6 +11,8 @@ interface ClimateState {
   iceSLR: number;
   /** Time-lagged effective temperature for ice response */
   iceTemp: number;
+  /** Time-lagged effective temperature for vegetation/biome response */
+  vegTemp: number;
   /** Sea ice season: 0 = September (minimum), 1 = March (maximum) */
   seaSeason: number;
   setTempDiff: (temp: number) => void;
@@ -97,22 +99,42 @@ function calculateIceTemp(tempDiff: number, timeFrame: number): number {
   return tempDiff * (fast + slow);
 }
 
+/**
+ * Time-lagged effective temperature for vegetation/biome response.
+ *
+ * Vegetation responds faster than ice sheets but slower than weather.
+ * Tundra greening is measurable within decades; full forest migration
+ * takes centuries. Two-component model:
+ *   vegTemp = ΔT × (0.7 × (1 - e^(-t/30)) + 0.3 × (1 - e^(-t/500)))
+ *
+ *   10yr  → 18%  (tundra starting to green)
+ *   100yr → 62%  (shrubs established, treeline shifting)
+ *   1kyr  → 86%  (forests migrated)
+ *   10kyr → 99%  (equilibrium)
+ */
+function calculateVegTemp(tempDiff: number, timeFrame: number): number {
+  const fast = 0.7 * (1 - Math.exp(-timeFrame / 30));
+  const slow = 0.3 * (1 - Math.exp(-timeFrame / 500));
+  return tempDiff * (fast + slow);
+}
+
 export const useClimateStore = create<ClimateState>((set) => ({
   tempDiff: 0,
   timeFrame: 100,
   slr: 0,
   iceSLR: 0,
   iceTemp: 0,
+  vegTemp: 0,
   seaSeason: 0,
   setTempDiff: (tempDiff) =>
     set((state) => {
       const { total, ice } = calculateSLR(tempDiff, state.timeFrame);
-      return { tempDiff, slr: total, iceSLR: ice, iceTemp: calculateIceTemp(tempDiff, state.timeFrame) };
+      return { tempDiff, slr: total, iceSLR: ice, iceTemp: calculateIceTemp(tempDiff, state.timeFrame), vegTemp: calculateVegTemp(tempDiff, state.timeFrame) };
     }),
   setTimeFrame: (timeFrame) =>
     set((state) => {
       const { total, ice } = calculateSLR(state.tempDiff, timeFrame);
-      return { timeFrame, slr: total, iceSLR: ice, iceTemp: calculateIceTemp(state.tempDiff, timeFrame) };
+      return { timeFrame, slr: total, iceSLR: ice, iceTemp: calculateIceTemp(state.tempDiff, timeFrame), vegTemp: calculateVegTemp(state.tempDiff, timeFrame) };
     }),
   setSeaSeason: (seaSeason) => set({ seaSeason }),
 }));

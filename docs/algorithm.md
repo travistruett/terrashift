@@ -129,6 +129,27 @@ iceTemp = ΔT × (0.3 × (1 - e^(-t/50)) + 0.7 × (1 - e^(-t/2000)))
 - 1,000 yr → 57%
 - 10,000 yr → 99%
 
+### 3b. Vegetation Temperature Model
+
+**Location:** `src/stores/climate.ts` → `calculateVegTemp()`
+
+Vegetation responds faster than ice sheets but slower than weather. Tundra greening is measurable within decades; full forest migration takes centuries. Two-component exponential lag:
+
+```
+vegTemp = ΔT × (0.7 × (1 - e^(-t/30)) + 0.3 × (1 - e^(-t/500)))
+```
+
+| Component | Weight | τ (years) | Represents |
+|-----------|--------|-----------|------------|
+| Fast | 70% | 30 | Shrub expansion, tundra greening |
+| Slow | 30% | 500 | Full forest migration |
+
+**Response fraction at various timeframes:**
+- 10 yr → 18% of ΔT
+- 100 yr → 62%
+- 1,000 yr → 86%
+- 10,000 yr → 99%
+
 ### 4. Ice Texture Generation (RGBA)
 
 **Location:** `scripts/process-ice.py`
@@ -196,7 +217,7 @@ Full elevation range (0–9000m), not the ±100m DEM. Mountains at 5000m+ now af
 
 **Location:** `src/components/RealisticEarth.tsx`
 
-The shader runs per-pixel at 60fps. It reads three textures and two uniforms (`u_slr`, `u_iceTemp`).
+The shader runs per-pixel at 60fps. It reads three textures and three uniforms (`u_slr`, `u_iceTemp`, `u_vegTemp`).
 
 #### 5.1 Sea Level Flooding
 
@@ -209,7 +230,33 @@ else if (elevation < 0) → exposed seabed (if sea level dropped)
 else                    → satellite color
 ```
 
-#### 5.2 Ice Overlay (Per-Pixel Threshold)
+#### 5.2 Vegetation / Biome Shift
+
+**Location:** `src/components/RealisticEarth.tsx` (fragment shader, after sea level, before ice overlay)
+
+Driven by `u_vegTemp` (separate, faster time constant than ice). Land pixels only (elevation ≥ 0). Three effects:
+
+**Arctic greening** (warming, lat > 50°):
+- Detects tundra via low saturation + low-medium brightness in satellite color
+- Blends toward boreal green (`0.15, 0.35, 0.12`)
+- Onset at +0.5°C vegTemp, full at +3°C
+- Dynamic treeline: base varies by latitude (800m at 72°, 2500m at 50°), rises 150m per °C of vegTemp (Körner & Paulsen 2004, ~6.5°C/km lapse rate)
+- Elevation gradient: full greening 500m+ below treeline, smooth fade to zero at treeline (not a hard cutoff)
+
+**Subtropical drying** (warming, lat 20°–55° max):
+- Detects existing green vegetation via green-dominant hue
+- Drying target shifts from brown grassland (`0.55, 0.48, 0.35`) to sandy desert (`0.68, 0.58, 0.42`) at extreme temps
+- Onset at +1.5°C vegTemp, full effect at +5°C, desert color at +20°C
+- Upper latitude expands with warming: 38° + 0.5° per °C vegTemp (Hadley cell expansion), capped at 55°
+- 75% max blend, preserving satellite luminance variation
+
+**Cooling reversal** (negative vegTemp):
+- Tundra expands equatorward into temperate zones (lat 30°–55°)
+- Desaturates existing green toward brown/grey tundra colors
+
+All effects use `smoothstep` blending against the satellite base color at ≤55% opacity, preserving the natural look.
+
+#### 5.3 Ice Overlay (Per-Pixel Threshold)
 
 The shader reads the RGBA ice texture and computes a threshold at full float precision per pixel:
 
@@ -268,7 +315,7 @@ float opacity = iceAmount * mix(0.55, 0.95, iceStrength);
 
 `max(iceThreshold, iceDelta)` handles both present-day ice (strong threshold → opaque) and growing ice (strong delta → gets more opaque as it establishes).
 
-#### 5.3 Lighting
+#### 5.4 Lighting
 
 Simple Lambertian diffuse + ambient:
 ```glsl
@@ -427,6 +474,7 @@ A running log of approaches tried, what worked, and what didn't.
 | Removed ocean opacity penalty | Dense pack ice was too translucent | Pack ice now solid white |
 | Replaced fract(sin()) dither with IGN | Visible moiré patterns when zoomed | Screen-space noise, no patterns |
 | Replaced 8-bit threshold read with RGBA per-pixel | 20+ iterations couldn't fix banding | Band-free transitions at float precision |
+| Dynamic treeline + elevation gradient | Static treeline was a binary cutoff — mountains uniformly green or not. Real treeline rises ~150m/°C (lapse rate). Replaced hard gate with smoothstep gradient (full greening 500m below treeline, fading to zero at treeline). Treeline now shifts with vegTemp. | Natural valley-to-peak gradient: dense forest → sparse → bare rock |
 | Gated elevNucleation behind 1500m minimum | Latitude bonus in elevNucleation gave sea-level thresholds everywhere, causing tropical oceans to ice over at -4°C. The `max(distThreshold, elevNucleation)` let elevNucleation override the correctly-negative distThreshold. | Sea-level ice only from distance-based spread; mountain glaciation preserved |
 
 ### UI Iterations
@@ -500,6 +548,16 @@ Ice growth smoothstep = (-1.0, 2.0) — 3°C blend zone
 Ice melt smoothstep = (0.0, -5.0) — 5°C melt zone
 Opacity range = 0.55 (thin edge) to 0.95 (dense/land)
 Opacity ramp = smoothstep(0.0, 2.0, max(threshold, delta))
+
+Arctic greening: onset 0.5°C, full 3.0°C, max opacity 0.70, lat > 50°, treeline rises 150m/°C, 500m fade zone
+Subtropical drying: onset 1.5°C, full 5.0°C, max opacity 0.75, lat 20°–(38+0.5×vegTemp)° capped 55°, desert color at 20°C+
+Cooling tundra expansion: onset 1.0°C, full 5.0°C, max opacity 0.40, lat 30°–55°
+```
+
+### Vegetation Constants (`climate.ts`)
+```
+vegTemp fast: τ=30yr, weight=0.7 (shrub expansion)
+vegTemp slow: τ=500yr, weight=0.3 (forest migration)
 ```
 
 ### SLR Constants (`climate.ts`)
