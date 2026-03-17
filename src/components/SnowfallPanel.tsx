@@ -367,7 +367,7 @@ export default function SnowfallPanel() {
 
               <Text size="sm" fw={600}>Limitations</Text>
               <Text size="sm" c="dimmed" lh={1.6}>
-                {"\u2022"} ERA5 resolution is ~25km {"\u2014"} snowfall varies at finer scales in mountains{"\n"}
+                {"\u2022"} Precipitation resolution is ~25km; temperature/humidity are ~11km (ERA5-Land){"\n"}
                 {"\u2022"} Temperature bins shift uniformly (no change in variance or storm tracks){"\n"}
                 {"\u2022"} Moisture scaling is thermodynamic only (no dynamic synoptic changes)
               </Text>

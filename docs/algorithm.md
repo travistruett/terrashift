@@ -293,8 +293,8 @@ This architecture solves the v1 model's core problems: it preserves the full dai
 
 #### 6.2 Data Source
 
-- **API:** Open-Meteo Historical Weather API (ERA5 reanalysis, ECMWF)
-- **Resolution:** 0.25 degree (~25 km) grid
+- **API:** Open-Meteo Historical Weather API (`best_match` model — combines ERA5-Land ~11km for temperature/humidity with ERA5 for precipitation)
+- **Resolution:** ~0.1 degree (~11 km) grid for temperature/humidity, ~0.25 degree (~25 km) for precipitation
 - **Baseline period:** 1991-2020 (WMO 30-year climate normal)
 - **Variables:** `precipitation_sum` (mm/day), `snowfall_sum` (cm/day), `temperature_2m_mean` (°C), `relative_humidity_2m_mean` (%)
 - **Wet-bulb computation:** Per-day wet-bulb temperature via Stull (2011) closed-form approximation (accurate ±0.3°C for RH 5–99%, T −20°C to +50°C)
@@ -366,8 +366,7 @@ The UI displays contextual HoverCards when results would confuse a layperson:
 
 #### 6.8 Limitations
 
-- ERA5 is ~25 km — snowfall varies at finer scales in mountains
-- No local elevation adjustment beyond what ERA5 captures per grid cell
+- Precipitation resolution is ~25km (ERA5); temperature/humidity are ~11km (ERA5-Land via `best_match`)
 - Shifting bins by ΔT assumes climate change shifts the mean without altering variance or skewness (Arctic amplification changes both)
 - Wet-bulb approximation (Stull 2011) is accurate to ±0.3°C but degrades outside RH 5–99% and T −20°C to +50°C
 - CC scaling is purely thermodynamic — cannot predict dynamic synoptic shifts (storm track changes, ENSO)
@@ -451,7 +450,7 @@ A running log of approaches tried, what worked, and what didn't.
 |---------|----------|--------|
 | v1 | Snow-fraction + Clausius-Clapeyron, Open-Meteo 30yr baseline | Initial implementation. Linear snow fraction, +7%/°C moisture. Edge cases handled for tropical/trace/threshold crossover. |
 | v2 | **Temperature-binned precipitation distribution** | Server bins 30yr daily precipitation by temperature (70 bins, 1°C). Client iterates bins with logistic snow fraction (Jennings 2018) + symmetric CC (6%/°C). Solves warm-margin, Wisconsin paradox, and DJF-only issues. Eliminates ad-hoc asymmetric moisture rates. |
-| v3 | **Wet-bulb temperature binning** | Server fetches `relative_humidity_2m_mean`, computes wet-bulb via Stull (2011), bins by wet-bulb instead of dry-bulb. Snow fraction T50 lowered from 1.0°C to 0.5°C (wet-bulb threshold). Improves rain/snow partitioning in dry continental climates where dry-bulb overestimates snowfall. |
+| v3 | **Wet-bulb temperature binning + best_match resolution** | Server fetches `relative_humidity_2m_mean`, computes wet-bulb via Stull (2011), bins by wet-bulb instead of dry-bulb. Snow fraction T50 lowered from 1.0°C to 0.5°C (wet-bulb threshold). Switched to `best_match` model (~11km ERA5-Land for temp/humidity, ~25km ERA5 for precip). Improves rain/snow partitioning in dry continental climates and resolution in complex terrain. |
 
 ---
 
