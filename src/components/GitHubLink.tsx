@@ -4,7 +4,7 @@ import { Box, Tooltip } from "@mantine/core";
 
 export default function GitHubLink() {
   return (
-    <Box visibleFrom="sm" pos="absolute" top={20} right={20} style={{ zIndex: 10 }}>
+    <Box visibleFrom="sm">
       <Tooltip label="View source" position="left" offset={8}>
         <a
           href="https://github.com/travistruett/terrashift"

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { TextInput, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Box, TextInput, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { searchLocation, type GeoResult } from "@/actions/geocode";
 import { useWeatherStore } from "@/stores/weather";
@@ -51,7 +51,7 @@ export default function LocationSearch() {
   }
 
   return (
-    <div style={{ position: "absolute", top: 12, left: "5vw", zIndex: 10, width: "90vw", maxWidth: 320 }}>
+    <Box w={{ base: "90vw", sm: 320 }}>
       <TextInput
         placeholder="Search location..."
         value={query}
@@ -117,6 +117,6 @@ export default function LocationSearch() {
           </Stack>
         </Paper>
       )}
-    </div>
+    </Box>
   );
 }

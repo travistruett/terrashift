@@ -47,8 +47,8 @@ export default function ClimatePanel() {
       p={{ base: "md", sm: "lg" }}
       radius="md"
       pos="absolute"
-      bottom={{ base: 12, sm: 24 }}
-      left={{ base: "5vw", sm: 24 }}
+      bottom="var(--mantine-spacing-md)"
+      left="var(--mantine-spacing-md)"
       w={{ base: "90vw", sm: 360 }}
       mah={{ base: "55vh", sm: "calc(100vh - 48px)" }}
       style={{

@@ -127,13 +127,13 @@ export default function WeatherPanel() {
   return (
     <Card
       shadow="md"
-      p="lg"
+      p={{ base: "md", sm: "lg" }}
       radius="md"
       pos="absolute"
-      bottom={narrow ? "calc(55vh + 24px)" : 24}
-      left={narrow ? "5vw" : undefined}
-      right={narrow ? undefined : 24}
-      w={narrow ? "90vw" : 340}
+      bottom={narrow ? "calc(55vh + var(--mantine-spacing-md))" : "var(--mantine-spacing-md)"}
+      left={narrow ? "var(--mantine-spacing-md)" : undefined}
+      right={narrow ? undefined : "var(--mantine-spacing-md)"}
+      w={{ base: "90vw", sm: 340 }}
       mah={narrow ? "calc(45vh - 36px)" : "calc(100vh - 48px)"}
       style={{
         zIndex: 10,
