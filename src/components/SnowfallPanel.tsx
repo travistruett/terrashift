@@ -61,7 +61,9 @@ export default function SnowfallPanel() {
   const [methodOpen, { toggle: toggleMethod }] = useDisclosure(false);
   const narrow = useMediaQuery("(max-width: 768px)");
 
+  // Only show panel once a fetch has been initiated (not just a pin drop)
   if (lat === null || lng === null) return null;
+  if (!loading && !error && precipDist.length === 0) return null;
 
   // The model computes a ratio: how much does the physics change snowfall?
   // We apply that ratio to the observed baseline (ERA5 snowfall_sum) for calibrated output.
@@ -133,6 +135,7 @@ export default function SnowfallPanel() {
           <Button
             size="xs"
             variant="light"
+            color="gray"
             onClick={() => fetchBaseline(lat, lng)}
           >
             Retry
@@ -218,7 +221,7 @@ export default function SnowfallPanel() {
                 p="sm"
                 style={{ borderRadius: "var(--mantine-radius-sm)" }}
               >
-                <Text size="xs" fw={500} c="dimmed">
+                <Text size="xs" fw={500} c="dimmed" td="underline">
                   Inputs
                 </Text>
                 <Group justify="space-between">

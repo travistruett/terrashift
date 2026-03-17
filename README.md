@@ -56,7 +56,7 @@ Run these to regenerate the 16K textures in `public/textures/`. Each script down
 |--------|--------|-----------|------|-------------|
 | `process-color.py` | `earth_color.jpg` (~8MB) | NASA Blue Marble 43K (~55MB) | ~2 min | Satellite imagery, downscaled to 16K |
 | `process-dem.py` | `earth_dem.png` (~5MB) | GEBCO bathymetry (~28MB) | ~30s | ±100m elevation, 8-bit grayscale |
-| `process-ice.py` | `earth_ice.png` (~15MB) | GEBCO (~28MB) + HadISST (~16MB) | ~90s | RGBA ice texture (distance, resilience, concentration, elevation) |
+| `process-ice.py` | `earth_ice.png` (~15MB) + `sea_ice_march.png` (~3MB) | GEBCO (~28MB) + IMS 4km (~8MB) + HadISST (~16MB) | ~3 min | RGBA ice texture + March sea ice for future seasonal toggle |
 
 **Run with:**
 ```bash
@@ -71,13 +71,26 @@ echo "y" | scripts/.venv/bin/python scripts/process-ice.py
 
 **After regenerating textures:** hard-refresh your browser (Cmd+Shift+R) to clear the Three.js texture cache.
 
+### `process-ice.py` details
+
+Generates two textures from three data sources:
+
+1. **Satellite ice detection** — finds bright white pixels at high latitude in `earth_color.jpg`
+2. **Real sea ice concentration** — NH from NOAA IMS 4km (polar stereographic, reprojected to equirectangular), SH from HadISST 1°. Downloads 10 years of September (Arctic minimum) and March (Arctic maximum), averages for pseudo-concentration.
+3. **GEBCO elevation** — for terrain height encoding
+
+**Outputs:**
+- `earth_ice.png` — 16K RGBA: R=distance from ice edge, G=land ice resilience, B=September sea ice concentration, A=elevation. Used by the GLSL shader for ice grow/shrink.
+- `sea_ice_march.png` — 16K grayscale March sea ice concentration. Saved for a future seasonal toggle (not yet wired into the shader).
+
 ### Data sources
 
-| Dataset | Provider | Resolution | Format | Auth |
-|---------|----------|------------|--------|------|
-| Blue Marble | NASA via h-schmidt.net | 43200×21600 | JPEG | None |
-| GEBCO Bathymetry | sbcode.net (GEBCO derived) | 5400×2700 | 16-bit TIFF | None |
-| HadISST Sea Ice | UK Met Office | 1° lat/lon (~360×180) | NetCDF3, gzipped | None |
+| Dataset | Provider | Resolution | Format | Auth | Used for |
+|---------|----------|------------|--------|------|----------|
+| Blue Marble | NASA via h-schmidt.net | 43200×21600 | JPEG | None | Satellite color |
+| GEBCO Bathymetry | sbcode.net (GEBCO derived) | 5400×2700 | 16-bit TIFF | None | Elevation/flooding |
+| IMS Snow & Ice | NOAA/NSIDC (G02156) | 6144×6144 (~4km) | gzipped ASCII | None | NH sea ice (Sep + Mar) |
+| HadISST Sea Ice | UK Met Office | 1° lat/lon (~360×180) | NetCDF3, gzipped | None | SH sea ice fallback |
 
 ## Commands
 

@@ -44,11 +44,11 @@ export default function EarthCanvas() {
     const lat = snapToGrid(rawLat);
     const lng = snapToGrid(rawLng);
 
-    // Dedup: skip if same grid cell is already selected
+    // Dedup: skip if same grid cell is already pinned
     const store = useSnowfallStore.getState();
     if (store.lat === lat && store.lng === lng) return;
 
-    store.fetchBaseline(lat, lng);
+    store.setPin(lat, lng);
   }
 
   return (
@@ -77,12 +77,12 @@ export default function EarthCanvas() {
         <OrbitControls
           enableZoom
           enablePan={false}
-          minDistance={1.15}
-          maxDistance={6}
-          rotateSpeed={0.3}
+          minDistance={1.25}
+          maxDistance={3}
+          rotateSpeed={0.15}
           zoomSpeed={0.2}
           enableDamping
-          dampingFactor={0.05}
+          dampingFactor={0.25}
         />
       </Canvas>
       <Loader />

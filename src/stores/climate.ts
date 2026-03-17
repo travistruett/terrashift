@@ -9,8 +9,11 @@ interface ClimateState {
   slr: number;
   /** Time-lagged effective temperature for ice response */
   iceTemp: number;
+  /** Sea ice season: 0 = September (minimum), 1 = March (maximum) */
+  seaSeason: number;
   setTempDiff: (temp: number) => void;
   setTimeFrame: (time: number) => void;
+  setSeaSeason: (season: number) => void;
 }
 
 /** Smooth activation: 0 → 1 centered at threshold */
@@ -91,6 +94,7 @@ export const useClimateStore = create<ClimateState>((set) => ({
   timeFrame: 100,
   slr: 0,
   iceTemp: 0,
+  seaSeason: 0,
   setTempDiff: (tempDiff) =>
     set((state) => ({
       tempDiff,
@@ -103,4 +107,5 @@ export const useClimateStore = create<ClimateState>((set) => ({
       slr: calculateSLR(state.tempDiff, timeFrame),
       iceTemp: calculateIceTemp(state.tempDiff, timeFrame),
     })),
+  setSeaSeason: (seaSeason) => set({ seaSeason }),
 }));

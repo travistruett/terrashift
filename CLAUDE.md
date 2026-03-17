@@ -22,7 +22,7 @@ No test framework is configured yet.
 - **PostCSS** with `postcss-preset-mantine` and breakpoint variables
 - **Zustand** for state management
 - **Three.js 0.183** / React Three Fiber v9 / Drei v10 for 3D graphics
-- **ESLint 9** flat config with `next/core-web-vitals` and `next/typescript`
+- **ESLint 10** flat config with `@eslint-react/eslint-plugin` and `typescript-eslint`
 
 ## Architecture
 
@@ -53,9 +53,11 @@ page.tsx (server) → EarthCanvas.tsx ("use client") → RealisticEarth.tsx
 - `public/textures/earth_color.jpg`: 16K JPEG, NASA Blue Marble
 - `public/textures/earth_dem.png`: 16K 8-bit grayscale, ±100m range (0.78m/step)
 - `public/textures/earth_ice.png`: 16K RGBA PNG (R=distance, G=land resilience, B=sea ice conc, A=elevation)
+- `public/textures/sea_ice_march.png`: 16K grayscale March sea ice (for future seasonal toggle)
 - Ice texture stores raw ingredients; shader computes threshold per-pixel at float precision (no 8-bit banding)
-- Generated from: satellite ice detection + HadISST real sea ice data + distance transform + GEBCO elevation
-- Regenerate: `echo "y" | scripts/.venv/bin/python scripts/process-ice.py` (downloads GEBCO + HadISST, ~90s)
+- Sea ice sources: NH from NOAA IMS 4km (no auth), SH from HadISST 1° (both Sep + Mar downloaded)
+- Generated from: satellite ice detection + IMS/HadISST sea ice + distance transform + GEBCO elevation
+- Regenerate: `echo "y" | scripts/.venv/bin/python scripts/process-ice.py` (downloads GEBCO + IMS + HadISST, ~3min)
 
 ## Algorithm Documentation
 

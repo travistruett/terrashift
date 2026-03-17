@@ -55,8 +55,10 @@ const fragmentShader = /* glsl */ `
   uniform sampler2D u_colorMap;
   uniform sampler2D u_dem;
   uniform sampler2D u_ice;
+  uniform sampler2D u_marchIce;
   uniform float u_slr;
   uniform float u_iceTemp;
+  uniform float u_seaSeason;
   uniform vec3 u_lightDir;
 
   varying vec2 vUv;
@@ -94,7 +96,9 @@ const fragmentShader = /* glsl */ `
     vec4 iceTex = texture2D(u_ice, vUv);
     float distNorm = iceTex.r;     // sqrt-encoded distance from ice edge
     float landRes  = iceTex.g;     // land ice resilience (0–1 → 0–${LAND_RES_SCALE}°C)
-    float seaConc  = iceTex.b;     // sea ice concentration (0–1)
+    float sepConc  = iceTex.b;     // September sea ice concentration (0–1)
+    float marConc  = texture2D(u_marchIce, vUv).r; // March sea ice (0 if not loaded)
+    float seaConc  = mix(sepConc, marConc, u_seaSeason);
     float iceElev  = iceTex.a;     // terrain elevation (0–1 → 0–${MAX_ELEV_M}m)
 
     // Compute threshold per-pixel at float precision
@@ -106,12 +110,27 @@ const fragmentShader = /* glsl */ `
       // Sea ice (HadISST): concentration-proportional resilience
       iceThreshold = seaConc * ${SEA_ICE_RES_SCALE.toFixed(1)};
     } else {
-      // Non-ice pixel: threshold from distance + terrain + latitude
-      float dist_km = distNorm * distNorm * ${MAX_DIST_KM.toFixed(1)};  // undo sqrt encoding
+      // Non-ice pixel: threshold from distance + elevation nucleation
+      float dist_km = distNorm * distNorm * ${MAX_DIST_KM.toFixed(1)};
       float lat = abs(0.5 - vUv.y) * 180.0;
       float elev_m = iceElev * ${MAX_ELEV_M.toFixed(1)};
+
+      // Distance-based spread from existing ice
       float growthRate = ${GROWTH_BASE.toFixed(1)} + ${GROWTH_LAT.toFixed(1)} * pow(lat / 90.0, 1.2) + ${GROWTH_ELEV.toFixed(1)} * elev_m;
-      iceThreshold = -(dist_km / growthRate);
+      float distThreshold = -(dist_km / growthRate);
+
+      // Ocean penalty: open water resists land-ice growth
+      // (sea ice is handled separately via B channel)
+      if (elevation < 0.0) {
+        distThreshold -= 2.0;
+      }
+
+      // Elevation nucleation: mountains glaciate independently
+      // Rockies, Andes, Alps, Himalayas form their own glaciers
+      float latBonus = (lat / 90.0) * 3.0;
+      float elevNucleation = (elev_m - 2500.0) / 2000.0 + latBonus - 3.0;
+
+      iceThreshold = max(distThreshold, elevNucleation);
     }
 
     float iceDelta = iceThreshold - u_iceTemp;
@@ -130,12 +149,12 @@ const fragmentShader = /* glsl */ `
       color = mix(color, underIce, meltAmount);
     }
 
-    // Ice growth: white overlay with strength-based opacity
-    float iceAmount = smoothstep(-1.0, 2.0, iceDelta);
+    // Ice growth: white overlay with sharper edges and terrain-aware opacity
+    float iceAmount = smoothstep(-0.3, 0.8, iceDelta);
     if (iceAmount > 0.0) {
       vec3 iceColor = vec3(0.92, 0.95, 0.98);
-      float iceStrength = smoothstep(0.0, 2.0, max(iceThreshold, iceDelta));
-      float opacity = iceAmount * mix(0.55, 0.95, iceStrength);
+      float iceStrength = smoothstep(0.0, 1.5, max(iceThreshold, iceDelta));
+      float opacity = iceAmount * mix(0.4, 0.95, iceStrength);
       color = mix(color, iceColor, opacity);
     }
 
@@ -154,12 +173,22 @@ interface RealisticEarthProps {
 
 export default function RealisticEarth({ onPointerDown, onPointerUp }: RealisticEarthProps) {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
+  const marchTexRef = useRef<THREE.Texture | null>(null);
+  const marchLoadingRef = useRef(false);
 
   const [colorMap, dem, ice] = useTexture([
     "/textures/earth_color.jpg",
     "/textures/earth_dem.png",
     "/textures/earth_ice.png",
   ]);
+
+  // 1x1 black placeholder — zero sea ice until March texture loads
+  // Intentional useMemo: Three.js needs stable texture reference
+  const blackTex = useMemo(() => {
+    const t = new THREE.DataTexture(new Uint8Array([0]), 1, 1, THREE.RedFormat);
+    t.needsUpdate = true;
+    return t;
+  }, []);
 
   // Stable reference needed — Three.js caches shaders by uniform object identity.
   // This is an intentional useMemo (React Compiler exception for Three.js stability).
@@ -168,19 +197,34 @@ export default function RealisticEarth({ onPointerDown, onPointerUp }: Realistic
       u_colorMap: { value: colorMap },
       u_dem: { value: dem },
       u_ice: { value: ice },
+      u_marchIce: { value: blackTex },
       u_slr: { value: 0 },
       u_iceTemp: { value: 0 },
+      u_seaSeason: { value: 0 },
       u_lightDir: { value: new THREE.Vector3(5, 3, 5).normalize() },
     }),
-    [colorMap, dem, ice],
+    [colorMap, dem, ice, blackTex],
   );
 
   // Update shader uniforms every frame from Zustand store (bypasses React renders)
   useFrame(() => {
-    if (materialRef.current) {
-      const state = useClimateStore.getState();
-      materialRef.current.uniforms.u_slr.value = state.slr;
-      materialRef.current.uniforms.u_iceTemp.value = state.iceTemp;
+    if (!materialRef.current) return;
+    const state = useClimateStore.getState();
+    materialRef.current.uniforms.u_slr.value = state.slr;
+    materialRef.current.uniforms.u_iceTemp.value = state.iceTemp;
+    // Only transition to March once the texture is actually loaded
+    materialRef.current.uniforms.u_seaSeason.value =
+      state.seaSeason > 0 && marchTexRef.current ? state.seaSeason : 0;
+
+    // Lazy-load March texture on first toggle to Winter
+    if (state.seaSeason > 0 && !marchTexRef.current && !marchLoadingRef.current) {
+      marchLoadingRef.current = true;
+      new THREE.TextureLoader().load("/textures/sea_ice_march.png", (tex) => {
+        marchTexRef.current = tex;
+        if (materialRef.current) {
+          materialRef.current.uniforms.u_marchIce.value = tex;
+        }
+      });
     }
   });
 

@@ -1,32 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate ice coverage threshold texture for TerraShift.
+Generate ice coverage textures for TerraShift.
 
-Uses satellite imagery to detect present-day ice, then computes a distance
-field from the ice edges. Ice grows/shrinks from its real boundaries — no
-circles, no rectangles.
+Detects present-day ice from satellite imagery, downloads real sea ice data,
+computes distance fields, and encodes everything into RGBA textures.
 
-Output: public/textures/earth_ice.png
-  - 16384x8192 8-bit grayscale PNG
-  - Encoding: pixel 0 = -40°C, pixel 128 ≈ 0°C, pixel 255 = +40°C
-  - Shader: if iceTemp < iceThreshold → render as ice
+Sea ice sources:
+  - NH: NOAA IMS 4km (6144x6144, polar stereographic, no auth required)
+  - SH: HadISST 1° (UK Met Office, NetCDF3)
+  Both: 10-year September average (2013-2022) for pseudo-concentration.
 
-Model:
-  1. Detect present-day ice from satellite color (bright white at high latitude)
-  2. Compute distance transform from ice edges (pixels → km)
-  3. Detected ice: threshold from latitude resilience (+0.5 to +8°C)
-  4. Non-ice: threshold = -distance_from_ice / growth_rate
-     Growth rate varies by latitude (faster at high latitudes) and elevation
-     (higher = faster). This means ice expands outward from existing edges,
-     following real coastlines, mountain ranges, and terrain.
-
-Calibration:
-  - Present (ΔT=0): Only satellite-detected ice shows
-  - LGM (ΔT≈-6): Ice expanded ~2000-3000km south from Arctic edges
-  - PETM (ΔT=+8): Nearly all ice gone
+Outputs:
+  public/textures/earth_ice.png  — 16K RGBA (R=distance, G=resilience, B=sea_ice, A=elevation)
+  public/textures/sea_ice_march.png — 16K grayscale March sea ice (for future seasonal toggle)
 
 Usage:
-  scripts/.venv/bin/python scripts/process-ice.py
+  echo "y" | scripts/.venv/bin/python scripts/process-ice.py
 
 Requires: pip install Pillow numpy requests scipy
 """
@@ -77,9 +66,19 @@ ICE_MOUNTAIN_ELEV = 3000    # min elevation (m) for mountain ice detection
 # We use a single scale factor (equatorial) and adjust via growth rate
 PIXEL_KM = 111.0 * 360.0 / WIDTH  # ~2.44 km/pixel at equator
 
-# Real sea ice data (HadISST from UK Met Office)
+# Real sea ice data
 HADISST_URL = "https://www.metoffice.gov.uk/hadobs/hadisst/data/HadISST_ice.nc.gz"
 SEA_ICE_CONC_MIN = 0.15       # 15% minimum concentration (IPCC standard)
+
+# IMS 4km sea ice (preferred for NH, ~27x sharper than HadISST)
+# NOAA Interactive Multisensor Snow and Ice Mapping System
+IMS_BASE_URL = "https://noaadata.apps.nsidc.org/NOAA/G02156/4km"
+IMS_GRID = 6144                   # 6144 x 6144 pixels
+IMS_CELL = 4000.0                 # 4 km cell size in meters
+IMS_RADIUS = 6371228.0            # Spherical Earth radius (m)
+IMS_TRUE_LAT = 60.0               # Standard parallel (°N)
+IMS_CENTRAL_LON = -80.0           # Central meridian (°W = 80°W)
+IMS_HALF_EXTENT = IMS_GRID / 2 * IMS_CELL  # 12,288,000 m
 
 # RGBA texture encoding ranges — must match src/constants/ice.ts
 MAX_DIST_KM = 8000.0          # R channel: sqrt(dist_km / MAX_DIST_KM)
@@ -116,10 +115,176 @@ def temp_to_pixel(t):
     return np.clip((t - TEMP_MIN) / (TEMP_MAX - TEMP_MIN) * 255, 0, 255).astype(np.uint8)
 
 
-def load_sea_ice(tmp_dir: str):
-    """Download HadISST and return September-mean sea ice concentration at 16K.
+# ── IMS 4km polar stereographic sea ice (NH only) ─────────────────────
 
-    Returns numpy array (HEIGHT, WIDTH) with values 0-1, or None on failure.
+def _ims_polar_stereo_fwd(lat_deg, lon_deg):
+    """Forward polar stereographic projection for IMS grid (spherical Earth).
+
+    Returns (x, y) in meters. Works with numpy arrays.
+    IMS uses: North Pole center, true scale at 60°N, central meridian -80°.
+    """
+    R = IMS_RADIUS
+    phi = np.radians(np.asarray(lat_deg, dtype=np.float64))
+    lam = np.radians(np.asarray(lon_deg, dtype=np.float64))
+    lam0 = np.radians(IMS_CENTRAL_LON)
+    phi_s = np.radians(IMS_TRUE_LAT)
+
+    # Scale factor so that grid spacing = true distance at standard parallel
+    k0 = (1 + np.sin(phi_s)) / 2
+
+    rho = 2 * R * k0 * np.tan(np.pi / 4 - phi / 2)
+    x = rho * np.sin(lam - lam0)
+    y = -rho * np.cos(lam - lam0)
+    return x, y
+
+
+def _parse_ims_ascii(data: bytes) -> np.ndarray:
+    """Parse IMS 4km gzipped ASCII file into 6144x6144 uint8 grid.
+
+    Values: 0=outside NH, 1=sea, 2=land, 3=sea ice, 4=snow.
+    """
+    text = gzip.decompress(data).decode("ascii")
+    # Find start of data (after "Data set starts here" line)
+    marker = "Data set starts here"
+    idx = text.find(marker)
+    if idx < 0:
+        raise ValueError("Could not find data marker in IMS file")
+    # Skip past the marker line and subsequent header lines until we hit data
+    lines = text[idx:].split("\n")
+    data_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if len(stripped) == IMS_GRID and stripped.isdigit():
+            data_lines.append(stripped)
+        if len(data_lines) == IMS_GRID:
+            break
+    if len(data_lines) != IMS_GRID:
+        raise ValueError(f"Expected {IMS_GRID} data rows, got {len(data_lines)}")
+
+    # Fast parse: join lines, convert ASCII digits to uint8 via numpy
+    joined = "".join(data_lines)
+    grid = np.frombuffer(joined.encode("ascii"), dtype=np.uint8) - ord("0")
+    grid = grid.reshape(IMS_GRID, IMS_GRID)
+    grid = np.flipud(grid)  # (1,1) is lower-left → flip so row 0 = north
+    return grid
+
+
+def load_ims_sea_ice(tmp_dir: str, day_of_year: int = 258, label: str = "September"):
+    """Download IMS 4km NH sea ice and reproject to 16K equirectangular.
+
+    Downloads one snapshot per year (2013-2022), parses the ASCII grids,
+    averages for pseudo-concentration, and reprojects.
+
+    Args:
+        day_of_year: Julian day to download (258=~Sep 15, 75=~Mar 16).
+        label: Human-readable season label for log messages.
+
+    Returns numpy array (HEIGHT, WIDTH) with values 0-1 (NH only), or None.
+    """
+    years = list(range(2013, 2023))
+
+    grids = []
+    print(f"\nDownloading IMS 4km sea ice data — {label} (NH)...")
+    for year in years:
+        found = False
+        for ver in ["v1.3", "v1.2"]:
+            fname = f"ims{year}{day_of_year:03d}_00UTC_4km_{ver}.asc.gz"
+            url = f"{IMS_BASE_URL}/{year}/{fname}"
+            try:
+                resp = requests.get(url, timeout=30)
+                if resp.status_code == 200 and len(resp.content) > 1000:
+                    grid = _parse_ims_ascii(resp.content)
+                    grids.append(grid)
+                    n_ice = np.sum(grid == 3)
+                    print(f"  {year} day {day_of_year}: {n_ice:,} sea ice pixels ({ver})")
+                    found = True
+                    break
+            except Exception as e:
+                print(f"  {year} day {day_of_year} {ver}: {e}")
+        if not found:
+            print(f"  {year} day {day_of_year}: not found")
+
+    if len(grids) < 3:
+        print(f"  Only got {len(grids)} files, need at least 3.")
+        return None
+
+    print(f"  Averaging {len(grids)} {label} snapshots...")
+
+    # Stack and compute fraction of years with ice at each pixel
+    stack = np.stack([(g == 3).astype(np.float32) for g in grids])
+    avg_ice = np.mean(stack, axis=0)
+
+    print(f"  Reprojecting IMS {IMS_GRID}x{IMS_GRID} -> {WIDTH}x{HEIGHT}...")
+    result = _reproject_ims_avg(avg_ice, HEIGHT, WIDTH)
+
+    conc_pct = np.sum(result > SEA_ICE_CONC_MIN) / result.size * 100
+    print(f"  NH {label} sea ice (>15%): {conc_pct:.1f}% of globe")
+    return result
+
+
+def _reproject_ims_avg(avg_ice, out_h, out_w):
+    """Reproject averaged IMS float grid (0-1) to equirectangular.
+
+    Reprojects at ~4K intermediate resolution (matching IMS 4km native res)
+    then upscales to the target size to avoid multi-GB memory usage at 16K.
+    """
+    # IMS is ~0.036° native; reproject at 0.033° (10800x5400) then upscale
+    MID_W, MID_H = 10800, 5400
+    mid = np.zeros((MID_H, MID_W), dtype=np.float32)
+
+    lat_arr = np.linspace(90, -90, MID_H, dtype=np.float64)
+    lon_arr = np.linspace(-180, 180, MID_W, endpoint=False, dtype=np.float64)
+
+    # Only NH lat > 30°
+    row_start = int(np.searchsorted(-lat_arr, -90.0))
+    row_end = int(np.searchsorted(-lat_arr, -30.0))
+    if row_start >= row_end:
+        return np.zeros((out_h, out_w), dtype=np.float32)
+
+    # Process in strips of 200 rows to stay memory-friendly
+    N = IMS_GRID
+    for strip_start in range(row_start, row_end, 200):
+        strip_end = min(strip_start + 200, row_end)
+        lat_sub = lat_arr[strip_start:strip_end]
+        lon_grid, lat_grid = np.meshgrid(lon_arr, lat_sub)
+
+        px, py = _ims_polar_stereo_fwd(lat_grid, lon_grid)
+        col_f = (px + IMS_HALF_EXTENT) / IMS_CELL - 0.5
+        row_f = (IMS_HALF_EXTENT - py) / IMS_CELL - 0.5
+
+        c0 = np.floor(col_f).astype(int)
+        r0 = np.floor(row_f).astype(int)
+        dc = col_f - c0
+        dr = row_f - r0
+
+        valid = (c0 >= 0) & (c0 < N - 1) & (r0 >= 0) & (r0 < N - 1)
+        c0s = np.clip(c0, 0, N - 2)
+        r0s = np.clip(r0, 0, N - 2)
+
+        val = (
+            avg_ice[r0s, c0s] * (1 - dc) * (1 - dr)
+            + avg_ice[r0s, c0s + 1] * dc * (1 - dr)
+            + avg_ice[r0s + 1, c0s] * (1 - dc) * dr
+            + avg_ice[r0s + 1, c0s + 1] * dc * dr
+        )
+
+        sub = np.zeros_like(lat_grid, dtype=np.float32)
+        sub[valid] = val[valid]
+        mid[strip_start:strip_end, :] = sub
+
+    # Upscale to target resolution
+    if out_h == MID_H and out_w == MID_W:
+        return mid
+    mid_img = Image.fromarray(mid, mode="F")
+    mid_img = mid_img.resize((out_w, out_h), Image.Resampling.BILINEAR)
+    return np.array(mid_img, dtype=np.float32)
+
+
+def load_sea_ice(tmp_dir: str):
+    """Download HadISST and return September + March sea ice concentration at 16K.
+
+    Returns (september, march) tuple of numpy arrays (HEIGHT, WIDTH) with values
+    0-1, or (None, None) on failure.
     HadISST: 1° lat/lon grid, NetCDF3 format (readable by scipy, no extra deps).
     """
     from scipy.io import netcdf_file
@@ -130,7 +295,7 @@ def load_sea_ice(tmp_dir: str):
     print("\nDownloading HadISST sea ice concentration data...")
     if not download_file(HADISST_URL, gz_path, timeout=180):
         print("  WARNING: Failed to download. Will use formula-based sea ice.")
-        return None
+        return None, None
 
     print("Decompressing...")
     with gzip.open(str(gz_path), "rb") as f_in:
@@ -144,39 +309,45 @@ def load_sea_ice(tmp_dir: str):
             n_times = sic_var.shape[0]
             n_years = n_times // 12
 
-            # Average last 10 Septembers (month index 8, 0-indexed from Jan)
             start_year = max(0, n_years - 10)
+
+            # Average last 10 Septembers (month index 8)
             sept_idx = [y * 12 + 8 for y in range(start_year, n_years)]
             print(f"  Averaging {len(sept_idx)} recent Septembers...")
-
             sept = np.zeros((sic_var.shape[1], sic_var.shape[2]), dtype=np.float64)
             for i in sept_idx:
                 sept += sic_var[i, :, :]
             sept /= len(sept_idx)
 
+            # Average last 10 Marches (month index 2)
+            march_idx = [y * 12 + 2 for y in range(start_year, n_years)]
+            print(f"  Averaging {len(march_idx)} recent Marches...")
+            march = np.zeros((sic_var.shape[1], sic_var.shape[2]), dtype=np.float64)
+            for i in march_idx:
+                march += sic_var[i, :, :]
+            march /= len(march_idx)
+
             # HadISST fill value is -1.0e+30; replace negatives with 0
-            sept = np.where(sept < 0, 0, sept).astype(np.float32)
-            sept = np.clip(sept, 0, 1.0)
+            sept = np.clip(np.where(sept < 0, 0, sept).astype(np.float32), 0, 1.0)
+            march = np.clip(np.where(march < 0, 0, march).astype(np.float32), 0, 1.0)
 
     except Exception as e:
         print(f"  WARNING: Failed to parse NetCDF: {e}")
-        return None
+        return None, None
 
-    # HadISST lons: 0.5..359.5 → shift to match our -180..180 grid
-    half = sept.shape[1] // 2
-    sept = np.roll(sept, half, axis=1)
+    # HadISST lons are already -179.5..179.5 — no shift needed
 
-    # Resize to 16K using PIL (same approach as elevation)
-    src_h, src_w = sept.shape
-    print(f"  Resizing {src_w}x{src_h} → {WIDTH}x{HEIGHT}...")
-    ice_img = Image.fromarray(sept, mode="F")
-    ice_img = ice_img.resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
-    result = np.clip(np.array(ice_img, dtype=np.float32), 0, 1.0)
+    def _resize(arr, label):
+        src_h, src_w = arr.shape
+        print(f"  Resizing {label} {src_w}x{src_h} → {WIDTH}x{HEIGHT}...")
+        img = Image.fromarray(arr, mode="F")
+        img = img.resize((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
+        result = np.clip(np.array(img, dtype=np.float32), 0, 1.0)
+        conc_pct = np.sum(result > SEA_ICE_CONC_MIN) / result.size * 100
+        print(f"  {label} sea ice coverage (>15%): {conc_pct:.1f}% of globe")
+        return result
 
-    conc_pct = np.sum(result > SEA_ICE_CONC_MIN) / result.size * 100
-    print(f"  Sea ice coverage (>15%): {conc_pct:.1f}% of globe")
-
-    return result
+    return _resize(sept, "September"), _resize(march, "March")
 
 
 def main():
@@ -279,17 +450,57 @@ def main():
     satellite_ice = is_ice.copy()
 
     # ── 4b. Load real sea ice concentration data ──
-    sea_ice_conc = None
-    with tempfile.TemporaryDirectory() as tmp_ice:
-        sea_ice_conc = load_sea_ice(tmp_ice)
+    # NH: IMS 4km (27x sharper than HadISST), SH: HadISST 1° fallback
+    # Download both September (minimum) and March (maximum) for future toggle
+    sea_ice_conc = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    march_sea_ice = None
+    nh_source = None
+    sh_source = None
 
-    if sea_ice_conc is not None:
+    with tempfile.TemporaryDirectory() as tmp_ice:
+        # NH September (Arctic minimum) — used for current texture
+        ims_sep = load_ims_sea_ice(tmp_ice, day_of_year=258, label="September")
+        if ims_sep is not None:
+            sea_ice_conc += ims_sep
+            nh_source = "IMS 4km"
+        else:
+            print("\n  IMS September failed, falling back to HadISST for NH...")
+
+        # NH March (Arctic maximum) — saved for future seasonal toggle
+        ims_mar = load_ims_sea_ice(tmp_ice, day_of_year=75, label="March")
+
+        # SH (+ NH fallback): HadISST — returns both September and March
+        hadisst_sept, hadisst_march = load_sea_ice(tmp_ice)
+        if hadisst_sept is not None:
+            if nh_source is None:
+                # Use HadISST for everything
+                sea_ice_conc = hadisst_sept
+                nh_source = "HadISST 1°"
+                sh_source = "HadISST 1°"
+            else:
+                # Only use HadISST for SH (lat < 0)
+                sh_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
+                sh_mask[HEIGHT // 2:, :] = True
+                sea_ice_conc = np.where(sh_mask, hadisst_sept, sea_ice_conc)
+                sh_source = "HadISST 1°"
+
+        # Compose March sea ice: IMS NH + HadISST March SH
+        if ims_mar is not None:
+            march_sea_ice = ims_mar.copy()
+            if hadisst_march is not None:
+                sh_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
+                sh_mask[HEIGHT // 2:, :] = True
+                march_sea_ice = np.where(sh_mask, hadisst_march, march_sea_ice)
+
+    sources = f"NH: {nh_source or 'satellite only'}, SH: {sh_source or 'satellite only'}"
+    has_data = nh_source is not None or sh_source is not None
+    if has_data:
         has_sea_ice = (sea_ice_conc > SEA_ICE_CONC_MIN) & is_ocean
         new_sea_ice = has_sea_ice & ~is_ice
-        print(f"  New sea ice pixels from HadISST: {np.sum(new_sea_ice) / is_ice.size * 100:.2f}%")
+        print(f"  New sea ice pixels ({sources}): {np.sum(new_sea_ice) / is_ice.size * 100:.2f}%")
         is_ice |= has_sea_ice
         ice_pct = np.sum(is_ice) / is_ice.size * 100
-        print(f"  Total ice (satellite + HadISST): {ice_pct:.1f}%")
+        print(f"  Total ice (satellite + real data): {ice_pct:.1f}%")
     else:
         print("  Using formula-based sea ice fallback.")
 
@@ -383,6 +594,18 @@ def main():
     print(f"  Channels: R=distance, G=land_resilience, B=sea_ice, A=elevation")
     print(f"  MAX_DIST_KM={MAX_DIST_KM}, MAX_ELEV_M={MAX_ELEV_M}")
     print(f"  (Shader computes threshold per-pixel from these — no banding)")
+
+    # ── 9. Save March sea ice for future seasonal toggle ──
+    if march_sea_ice is not None:
+        march_path = OUTPUT_DIR / "sea_ice_march.png"
+        # Grayscale: 0-255 = concentration 0-1
+        march_u8 = np.clip(march_sea_ice * 255, 0, 255).astype(np.uint8)
+        Image.fromarray(march_u8, mode="L").save(march_path, "PNG", optimize=True)
+        march_kb = march_path.stat().st_size // 1024
+        n_march = np.sum(march_sea_ice > SEA_ICE_CONC_MIN)
+        print(f"\nMarch sea ice saved to: {march_path}")
+        print(f"  Size: {march_kb}KB, ice pixels: {n_march:,}")
+        print(f"  (For future seasonal toggle — not used in current texture)")
 
 
 if __name__ == "__main__":

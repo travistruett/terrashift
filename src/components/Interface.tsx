@@ -6,6 +6,7 @@ import {
   Card,
   Collapse,
   Group,
+  SegmentedControl,
   Slider,
   Stack,
   Text,
@@ -29,7 +30,7 @@ function formatIcePct(slr: number): string {
 }
 
 export default function Interface() {
-  const { tempDiff, timeFrame, slr, setTempDiff, setTimeFrame } =
+  const { tempDiff, timeFrame, slr, seaSeason, setTempDiff, setTimeFrame, setSeaSeason } =
     useClimateStore();
   const [opened, { toggle }] = useDisclosure(true);
   const [methodOpen, { toggle: toggleMethod }] = useDisclosure(false);
@@ -138,6 +139,20 @@ export default function Interface() {
               </Text>
             </Group>
           </Stack>
+
+          <Box>
+            <Text size="sm" fw={500} mb={6}>Sea Ice Season</Text>
+            <SegmentedControl
+              fullWidth
+              size="xs"
+              value={String(seaSeason)}
+              onChange={(v) => setSeaSeason(Number(v))}
+              data={[
+                { label: "Summer (Sep)", value: "0" },
+                { label: "Winter (Mar)", value: "1" },
+              ]}
+            />
+          </Box>
 
           <Group justify="space-between" align="center" style={{ cursor: "pointer" }} onClick={toggleMethod}>
             <Text size="xs" c="dimmed">Methodology</Text>

@@ -9,6 +9,7 @@ interface SnowfallState {
   loading: boolean;
   error: string | null;
   requestId: number;
+  setPin: (lat: number, lng: number) => void;
   fetchBaseline: (lat: number, lng: number) => Promise<void>;
   clear: () => void;
 }
@@ -21,6 +22,18 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
   loading: false,
   error: null,
   requestId: 0,
+
+  setPin: (lat: number, lng: number) => {
+    set((state) => ({
+      lat,
+      lng,
+      precipDist: [],
+      baselineSnowfallCm: 0,
+      loading: false,
+      error: null,
+      requestId: state.requestId + 1,
+    }));
+  },
 
   fetchBaseline: async (lat: number, lng: number) => {
     const id = get().requestId + 1;
