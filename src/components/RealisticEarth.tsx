@@ -15,7 +15,7 @@ import {
   GROWTH_LAT,
   GROWTH_ELEV,
 } from "@/constants/ice";
-import { TEXTURE_VERSION } from "@/constants/textures";
+import { TEXTURE_VERSION, CDN_URL } from "@/constants/textures";
 
 /*
  * Shader architecture
@@ -258,10 +258,11 @@ export default function RealisticEarth({ onPointerDown, onPointerUp }: Realistic
   const marchLoadingRef = useRef(false);
 
   const v = `?v=${TEXTURE_VERSION}`;
+  const base = CDN_URL;
   const [colorMap, dem, ice] = useTexture([
-    `/textures/earth_color.jpg${v}`,
-    `/textures/earth_dem.png${v}`,
-    `/textures/earth_ice.png${v}`,
+    `${base}/textures/earth_color.jpg${v}`,
+    `${base}/textures/earth_dem.png${v}`,
+    `${base}/textures/earth_ice.png${v}`,
   ]);
 
   // 1x1 black placeholder — zero sea ice until March texture loads
@@ -303,7 +304,7 @@ export default function RealisticEarth({ onPointerDown, onPointerUp }: Realistic
     // Lazy-load March texture on first toggle to Winter
     if (state.seaSeason > 0 && !marchTexRef.current && !marchLoadingRef.current) {
       marchLoadingRef.current = true;
-      new THREE.TextureLoader().load(`/textures/sea_ice_march.png${v}`, (tex) => {
+      new THREE.TextureLoader().load(`${base}/textures/sea_ice_march.png${v}`, (tex) => {
         marchTexRef.current = tex;
         if (materialRef.current) {
           materialRef.current.uniforms.u_marchIce.value = tex;
