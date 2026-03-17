@@ -15,6 +15,7 @@ pnpm dev          # → http://localhost:3000
 
 - **Sea level rise/fall** — coastal flooding and exposed seabed rendered per-pixel from GEBCO elevation data
 - **Ice growth & melt** — Greenland, Antarctica, Arctic sea ice, and mountain glaciers respond to temperature with realistic geography
+- **Vegetation & biome shift** — arctic greening with dynamic treeline, subtropical desertification with Hadley cell expansion, elevation-aware forest density
 - **Snowfall projections** — click any point on the globe to see how snowfall changes, powered by 30 years of ERA5 reanalysis data with wet-bulb temperature partitioning
 - **Location search** — search for any location and fly the camera there
 - **Sea ice seasons** — toggle between September (minimum) and March (maximum) sea ice extent
@@ -113,6 +114,27 @@ Generates two textures from three data sources:
 | IMS Snow & Ice | NOAA/NSIDC (G02156) | 6144×6144 (~4km) | gzipped ASCII | None | NH sea ice (Sep + Mar) |
 | HadISST Sea Ice | UK Met Office | 1° lat/lon (~360×180) | NetCDF3, gzipped | None | SH sea ice |
 | ERA5 Reanalysis | ECMWF via Open-Meteo | ~11km (best_match) | JSON API | None | Snowfall projections |
+
+## CDN (Cloudflare R2)
+
+The 16K textures (~35MB total) are served from Cloudflare R2 in production to avoid Vercel bandwidth costs. R2 has zero egress fees.
+
+**Local dev:** No setup needed — textures load from `public/textures/` when `NEXT_PUBLIC_CDN_URL` is unset.
+
+**Production:** Set `NEXT_PUBLIC_CDN_URL` in Vercel to the R2 public URL.
+
+**Uploading textures:** After regenerating textures, upload to R2:
+
+```bash
+# Add R2 credentials to .env.local (gitignored):
+#   R2_ACCESS_KEY_ID=<your key>
+#   R2_SECRET_ACCESS_KEY=<your secret>
+
+./scripts/upload-textures.sh          # upload changed textures
+./scripts/upload-textures.sh --dry    # preview what would upload
+```
+
+Requires `awscli` (`brew install awscli`). The script reads credentials from `.env.local` automatically.
 
 ## Commands
 
