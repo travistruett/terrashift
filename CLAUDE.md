@@ -68,7 +68,7 @@ When modifying any of the following, you MUST update `docs/algorithm.md` **and**
 - **Ice temperature model** (`src/stores/climate.ts` → `calculateIceTemp`): update §3 "Ice Temperature Model" + `ClimatePanel.tsx` modal
 - **Ice texture generation** (`scripts/process-ice.py`): update §4 "Ice Threshold Texture Generation"
 - **GLSL shader ice/flood logic** (`src/components/RealisticEarth.tsx`): update §5 "GLSL Fragment Shader"
-- **Snowfall model** (`src/components/SnowfallPanel.tsx`, `src/actions/snowfall.ts`): update §6 "Snowfall Projection Model" + `SnowfallPanel.tsx` methodology section & modal
+- **Weather model** (`src/components/WeatherPanel.tsx`, `src/actions/weather.ts`): update §6 "Weather Projection Model" + `WeatherPanel.tsx` methodology section & modal
 - **Tuning constants**: update the "Tuning Reference" section at the bottom
 - **Any new approach or rejected approach**: add to "Iteration History" section
 

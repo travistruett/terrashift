@@ -4,17 +4,17 @@ import { useRef } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { Vector3 } from "three";
-import { useSnowfallStore } from "@/stores/snowfall";
+import { useWeatherStore } from "@/stores/weather";
 
 const _markerDir = new Vector3();
 const _camDir = new Vector3();
 
 export default function GlobeMarker() {
-  const lat = useSnowfallStore((s) => s.lat);
-  const lng = useSnowfallStore((s) => s.lng);
-  const loading = useSnowfallStore((s) => s.loading);
-  const hasData = useSnowfallStore((s) => s.precipDist.length > 0);
-  const hasError = useSnowfallStore((s) => s.error !== null);
+  const lat = useWeatherStore((s) => s.lat);
+  const lng = useWeatherStore((s) => s.lng);
+  const loading = useWeatherStore((s) => s.loading);
+  const hasData = useWeatherStore((s) => s.precipDist.length > 0);
+  const hasError = useWeatherStore((s) => s.error !== null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const posRef = useRef({ x: 0, y: 0, z: 0 });
 
@@ -43,7 +43,7 @@ export default function GlobeMarker() {
 
   function handleFetch(e: React.MouseEvent) {
     e.stopPropagation();
-    useSnowfallStore.getState().fetchBaseline(lat!, lng!);
+    useWeatherStore.getState().fetchBaseline(lat!, lng!);
   }
 
   return (

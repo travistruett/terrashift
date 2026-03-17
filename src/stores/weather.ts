@@ -1,11 +1,15 @@
 import { create } from "zustand";
-import { fetchSnowfallBaseline } from "@/actions/snowfall";
+import { fetchWeatherBaseline } from "@/actions/weather";
 
-interface SnowfallState {
+interface WeatherState {
   lat: number | null;
   lng: number | null;
   precipDist: number[];
   baselineSnowfallCm: number;
+  avgHighC: number;
+  avgLowC: number;
+  totalPrecipMm: number;
+  avgRH: number;
   loading: boolean;
   error: string | null;
   requestId: number;
@@ -17,11 +21,15 @@ interface SnowfallState {
   clear: () => void;
 }
 
-export const useSnowfallStore = create<SnowfallState>((set, get) => ({
+export const useWeatherStore = create<WeatherState>((set, get) => ({
   lat: null,
   lng: null,
   precipDist: [],
   baselineSnowfallCm: 0,
+  avgHighC: 0,
+  avgLowC: 0,
+  totalPrecipMm: 0,
+  avgRH: 0,
   loading: false,
   error: null,
   requestId: 0,
@@ -36,6 +44,10 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
       lng,
       precipDist: [],
       baselineSnowfallCm: 0,
+      avgHighC: 0,
+      avgLowC: 0,
+      totalPrecipMm: 0,
+      avgRH: 0,
       loading: false,
       error: null,
       requestId: state.requestId + 1,
@@ -47,11 +59,15 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
     set({ lat, lng, loading: true, error: null, requestId: id });
 
     try {
-      const result = await fetchSnowfallBaseline(lat, lng);
+      const result = await fetchWeatherBaseline(lat, lng);
       if (get().requestId === id) {
         set({
           precipDist: result.precipDist,
           baselineSnowfallCm: result.baselineSnowfallCm,
+          avgHighC: result.avgHighC,
+          avgLowC: result.avgLowC,
+          totalPrecipMm: result.totalPrecipMm,
+          avgRH: result.avgRH,
           loading: false,
         });
       }
@@ -68,6 +84,10 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
       lng: null,
       precipDist: [],
       baselineSnowfallCm: 0,
+      avgHighC: 0,
+      avgLowC: 0,
+      totalPrecipMm: 0,
+      avgRH: 0,
       loading: false,
       error: null,
       requestId: state.requestId + 1,

@@ -2,7 +2,7 @@ import EarthCanvas from "@/components/EarthCanvas";
 import ClimatePanel from "@/components/ClimatePanel";
 import GitHubLink from "@/components/GitHubLink";
 import LocationSearch from "@/components/LocationSearch";
-import SnowfallPanel from "@/components/SnowfallPanel";
+import WeatherPanel from "@/components/WeatherPanel";
 
 export default function Home() {
   return (
@@ -11,7 +11,7 @@ export default function Home() {
       <GitHubLink />
       <LocationSearch />
       <ClimatePanel />
-      <SnowfallPanel />
+      <WeatherPanel />
     </main>
   );
 }

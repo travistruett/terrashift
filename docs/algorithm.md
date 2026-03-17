@@ -322,28 +322,37 @@ Simple Lambertian diffuse + ambient:
 float light = 0.25 + max(dot(normal, lightDir), 0.0) * 0.75;
 ```
 
-### 6. Snowfall Projection Model
+### 6. Weather Projection Model
 
-**Location:** `src/components/SnowfallPanel.tsx` (client-side projection), `src/actions/snowfall.ts` (server-side data fetch)
+**Location:** `src/components/WeatherPanel.tsx` (client-side projection), `src/actions/weather.ts` (server-side data fetch)
 
-Click any point on the globe to see projected snowfall based on the current temperature setting. The baseline comes from ERA5 reanalysis; the projection is computed client-side so it updates instantly when the temperature slider moves.
+Click any point on the globe to see projected weather based on the current temperature setting. The baseline comes from ERA5 reanalysis; projections are computed client-side so they update instantly when the temperature slider moves. Four metrics are displayed: temperature (avg high/low), precipitation, snowfall, and humidity.
 
-#### 6.1 Architecture: Server Bins + Client Projection
+#### 6.1 Architecture: Server Aggregation + Client Projection
 
 The model splits computation between server and client:
 
-**Server** (`src/actions/snowfall.ts`): Fetches 30 years of daily `precipitation_sum`, `temperature_2m_mean`, and `relative_humidity_2m_mean` from Open-Meteo. Computes wet-bulb temperature per day via the Stull (2011) approximation. Bins total precipitation into 1°C-wide wet-bulb temperature bins (70 bins from -40°C to +29°C). Returns the annual-average precipitation per bin (`precipDist[]`). Uses ALL days of the year (not just winter months) — the bins naturally capture which temperatures produce precipitation.
+**Server** (`src/actions/weather.ts`): Fetches 30 years of daily `precipitation_sum`, `snowfall_sum`, `temperature_2m_mean`, `temperature_2m_max`, `temperature_2m_min`, and `relative_humidity_2m_mean` from Open-Meteo. Computes:
+- **Precipitation bins:** Wet-bulb temperature per day via Stull (2011), bins total precipitation into 1°C-wide wet-bulb temperature bins (70 bins from -40°C to +29°C). Returns annual-average precipitation per bin (`precipDist[]`).
+- **Temperature baselines:** Average daily high (`avgHighC` = mean of all `temperature_2m_max`) and average daily low (`avgLowC` = mean of all `temperature_2m_min`).
+- **Precipitation baseline:** Annual total precipitation (`totalPrecipMm` = sum / 30 years).
+- **Humidity baseline:** Average relative humidity (`avgRH` = mean of all `relative_humidity_2m_mean`).
+- **Snowfall baseline:** Observed annual snowfall (`baselineSnowfallCm` = sum of `snowfall_sum` / 30 years).
 
-**Client** (`src/components/SnowfallPanel.tsx`): Iterates over the bins, applies temperature shift + moisture scaling + snow fraction, and sums to get projected snowfall. Runs in <1ms, so it updates instantly on slider drag.
+**Client** (`src/components/WeatherPanel.tsx`): Projects each metric:
+- **Temperature:** baseline + ΔT (simple shift)
+- **Precipitation:** baseline × e^(0.06 × ΔT) (Clausius-Clapeyron scaling)
+- **Snowfall:** Iterates over wet-bulb bins with temperature shift + CC scaling + logistic snow fraction. Computes a ratio vs model baseline and applies to observed baseline.
+- **Humidity:** RH displayed as-is (stays ~constant under warming); absolute moisture change noted as ±6%/°C.
 
-This architecture solves the v1 model's core problems: it preserves the full daily temperature distribution instead of collapsing to a single mean, which eliminates the warm-margin problem, the "Wisconsin cooling paradox," and the DJF-only limitation.
+All projections run in <1ms, so they update instantly on slider drag.
 
 #### 6.2 Data Source
 
 - **API:** Open-Meteo Historical Weather API (`best_match` model — combines ERA5-Land ~11km for temperature/humidity with ERA5 for precipitation)
 - **Resolution:** ~0.1 degree (~11 km) grid for temperature/humidity, ~0.25 degree (~25 km) for precipitation
 - **Baseline period:** 1991-2020 (WMO 30-year climate normal)
-- **Variables:** `precipitation_sum` (mm/day), `snowfall_sum` (cm/day), `temperature_2m_mean` (°C), `relative_humidity_2m_mean` (%)
+- **Variables:** `precipitation_sum` (mm/day), `snowfall_sum` (cm/day), `temperature_2m_mean` (°C), `temperature_2m_max` (°C), `temperature_2m_min` (°C), `relative_humidity_2m_mean` (%)
 - **Wet-bulb computation:** Per-day wet-bulb temperature via Stull (2011) closed-form approximation (accurate ±0.3°C for RH 5–99%, T −20°C to +50°C)
 - **Binning:** Each day's `precipitation_sum` is added to the 1°C bin matching its daily mean wet-bulb temperature. Totals are divided by 30 years to get annual averages.
 - **Observed baseline:** `snowfall_sum` is summed and divided by 30 for accurate baseline display (the logistic model overestimates baseline at warm-margin locations)
@@ -499,6 +508,7 @@ A running log of approaches tried, what worked, and what didn't.
 | v1 | Snow-fraction + Clausius-Clapeyron, Open-Meteo 30yr baseline | Initial implementation. Linear snow fraction, +7%/°C moisture. Edge cases handled for tropical/trace/threshold crossover. |
 | v2 | **Temperature-binned precipitation distribution** | Server bins 30yr daily precipitation by temperature (70 bins, 1°C). Client iterates bins with logistic snow fraction (Jennings 2018) + symmetric CC (6%/°C). Solves warm-margin, Wisconsin paradox, and DJF-only issues. Eliminates ad-hoc asymmetric moisture rates. |
 | v3 | **Wet-bulb temperature binning + best_match resolution** | Server fetches `relative_humidity_2m_mean`, computes wet-bulb via Stull (2011), bins by wet-bulb instead of dry-bulb. Snow fraction T50 lowered from 1.0°C to 0.5°C (wet-bulb threshold). Switched to `best_match` model (~11km ERA5-Land for temp/humidity, ~25km ERA5 for precip). Improves rain/snow partitioning in dry continental climates and resolution in complex terrain. |
+| v4 | **Rename to WeatherPanel + expand baseline metrics** | Renamed `SnowfallPanel`/`snowfall.ts` to `WeatherPanel`/`weather.ts`. Added `temperature_2m_max` and `temperature_2m_min` to Open-Meteo call. Server now computes avgHighC, avgLowC, totalPrecipMm, avgRH from 30-year daily data. UI shows 4 metric sections (temperature, precipitation, snowfall, humidity). Snowfall projection model unchanged. |
 
 ---
 

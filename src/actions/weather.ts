@@ -1,12 +1,20 @@
 "use server";
 
-export interface SnowfallBaseline {
+export interface WeatherBaseline {
   lat: number;
   lng: number;
   /** Annual total precipitation (mm) in each 1°C wet-bulb temperature bin. Index 0 = [-40,-39)°C, index 69 = [29,30)°C */
   precipDist: number[];
   /** Observed annual snowfall in cm (from ERA5 snowfall_sum, used as calibrated baseline) */
   baselineSnowfallCm: number;
+  /** Average daily high temperature (°C) */
+  avgHighC: number;
+  /** Average daily low temperature (°C) */
+  avgLowC: number;
+  /** Total annual precipitation (mm) */
+  totalPrecipMm: number;
+  /** Average relative humidity (%) */
+  avgRH: number;
 }
 
 const BIN_MIN = -40;
@@ -19,6 +27,8 @@ interface OpenMeteoResponse {
     precipitation_sum: (number | null)[];
     snowfall_sum: (number | null)[];
     temperature_2m_mean: (number | null)[];
+    temperature_2m_max: (number | null)[];
+    temperature_2m_min: (number | null)[];
     relative_humidity_2m_mean: (number | null)[];
   };
 }
@@ -40,10 +50,10 @@ function wetBulb(T: number, RH: number): number {
   );
 }
 
-export async function fetchSnowfallBaseline(
+export async function fetchWeatherBaseline(
   lat: number,
   lng: number
-): Promise<SnowfallBaseline> {
+): Promise<WeatherBaseline> {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     throw new Error("Coordinates out of range");
   }
@@ -53,7 +63,7 @@ export async function fetchSnowfallBaseline(
   url.searchParams.set("longitude", lng.toFixed(4));
   url.searchParams.set("start_date", "1991-01-01");
   url.searchParams.set("end_date", "2020-12-31");
-  url.searchParams.set("daily", "precipitation_sum,snowfall_sum,temperature_2m_mean,relative_humidity_2m_mean");
+  url.searchParams.set("daily", "precipitation_sum,snowfall_sum,temperature_2m_mean,temperature_2m_max,temperature_2m_min,relative_humidity_2m_mean");
   url.searchParams.set("models", "best_match");
   url.searchParams.set("timezone", "auto");
 
@@ -76,14 +86,15 @@ function aggregate(
   lat: number,
   lng: number,
   data: OpenMeteoResponse
-): SnowfallBaseline {
-  const { precipitation_sum, snowfall_sum, temperature_2m_mean, relative_humidity_2m_mean } = data.daily;
+): WeatherBaseline {
+  const { precipitation_sum, snowfall_sum, temperature_2m_mean, temperature_2m_max, temperature_2m_min, relative_humidity_2m_mean } = data.daily;
 
-  // Accumulate total precipitation into 1°C-wide wet-bulb temperature bins
   const bins = new Float64Array(BIN_COUNT);
-
-  // Also sum observed snowfall for calibrated baseline display
   let totalSnowfall = 0;
+  let sumTMax = 0, countTMax = 0;
+  let sumTMin = 0, countTMin = 0;
+  let sumPrecip = 0;
+  let sumRH = 0, countRH = 0;
 
   for (let i = 0; i < precipitation_sum.length; i++) {
     const precip = precipitation_sum[i];
@@ -98,15 +109,30 @@ function aggregate(
     }
 
     const snow = snowfall_sum[i];
-    if (snow != null) {
-      totalSnowfall += snow;
-    }
+    if (snow != null) { totalSnowfall += snow; }
+
+    const tMax = temperature_2m_max[i];
+    if (tMax != null) { sumTMax += tMax; countTMax++; }
+
+    const tMin = temperature_2m_min[i];
+    if (tMin != null) { sumTMin += tMin; countTMin++; }
+
+    if (precip != null) { sumPrecip += precip; }
+    if (rh != null) { sumRH += rh; countRH++; }
   }
 
-  // Convert totals to annual averages (30-year baseline)
   const years = 30;
   const precipDist = Array.from(bins, (v) => v / years);
   const baselineSnowfallCm = totalSnowfall / years;
 
-  return { lat, lng, precipDist, baselineSnowfallCm };
+  return {
+    lat,
+    lng,
+    precipDist,
+    baselineSnowfallCm,
+    avgHighC: countTMax > 0 ? sumTMax / countTMax : 0,
+    avgLowC: countTMin > 0 ? sumTMin / countTMin : 0,
+    totalPrecipMm: sumPrecip / years,
+    avgRH: countRH > 0 ? sumRH / countRH : 0,
+  };
 }

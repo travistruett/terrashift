@@ -10,7 +10,7 @@ import type { ThreeEvent } from "@react-three/fiber";
 import RealisticEarth from "./RealisticEarth";
 import GlobeMarker from "./GlobeMarker";
 import AtmosphereGlow from "./AtmosphereGlow";
-import { useSnowfallStore } from "@/stores/snowfall";
+import { useWeatherStore } from "@/stores/weather";
 
 const _flyTarget = new Vector3();
 
@@ -19,7 +19,7 @@ function CameraAnimator({
 }: {
   controlsRef: React.RefObject<React.ComponentRef<typeof OrbitControls> | null>;
 }) {
-  const flyTo = useSnowfallStore((s) => s.flyTo);
+  const flyTo = useWeatherStore((s) => s.flyTo);
 
   useFrame(() => {
     const controls = controlsRef.current;
@@ -39,7 +39,7 @@ function CameraAnimator({
     controls.update();
 
     if (controls.object.position.distanceTo(_flyTarget) < 0.01) {
-      useSnowfallStore.getState().clearFlyTo();
+      useWeatherStore.getState().clearFlyTo();
     }
   });
 
@@ -82,7 +82,7 @@ export default function EarthCanvas() {
     const lng = snapToGrid(rawLng);
 
     // Dedup: skip if same grid cell is already pinned
-    const store = useSnowfallStore.getState();
+    const store = useWeatherStore.getState();
     if (store.lat === lat && store.lng === lng) return;
 
     store.setPin(lat, lng);

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { TextInput, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { searchLocation, type GeoResult } from "@/actions/geocode";
-import { useSnowfallStore } from "@/stores/snowfall";
+import { useWeatherStore } from "@/stores/weather";
 
 export default function LocationSearch() {
   const [query, setQuery] = useState("");
@@ -36,7 +36,7 @@ export default function LocationSearch() {
     setQuery(result.displayName.split(",")[0]);
     setOpen(false);
     setResults([]);
-    const store = useSnowfallStore.getState();
+    const store = useWeatherStore.getState();
     store.setPin(result.lat, result.lng);
     store.setFlyTo(result.lat, result.lng);
   }
