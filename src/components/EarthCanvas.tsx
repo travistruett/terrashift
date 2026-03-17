@@ -1,14 +1,49 @@
 "use client";
 
 import { useRef } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Loader } from "@react-three/drei";
 import { Suspense } from "react";
+import { Vector3 } from "three";
 import type { ThreeEvent } from "@react-three/fiber";
 import RealisticEarth from "./RealisticEarth";
 import GlobeMarker from "./GlobeMarker";
 import AtmosphereGlow from "./AtmosphereGlow";
 import { useSnowfallStore } from "@/stores/snowfall";
+
+const _flyTarget = new Vector3();
+
+function CameraAnimator({
+  controlsRef,
+}: {
+  controlsRef: React.RefObject<React.ComponentRef<typeof OrbitControls> | null>;
+}) {
+  const flyTo = useSnowfallStore((s) => s.flyTo);
+
+  useFrame(() => {
+    const controls = controlsRef.current;
+    if (!flyTo || !controls) return;
+
+    const alpha = (flyTo.lng + 180) * (Math.PI / 180);
+    const beta = (90 - flyTo.lat) * (Math.PI / 180);
+    _flyTarget.set(
+      -Math.cos(alpha) * Math.sin(beta),
+      Math.cos(beta),
+      Math.sin(alpha) * Math.sin(beta),
+    );
+    const dist = controls.object.position.length();
+    _flyTarget.multiplyScalar(dist);
+
+    controls.object.position.lerp(_flyTarget, 0.06);
+    controls.update();
+
+    if (controls.object.position.distanceTo(_flyTarget) < 0.01) {
+      useSnowfallStore.getState().clearFlyTo();
+    }
+  });
+
+  return null;
+}
 
 /** Round to nearest 0.25 degrees (one ERA5 grid cell) */
 function snapToGrid(value: number): number {
@@ -17,6 +52,7 @@ function snapToGrid(value: number): number {
 
 export default function EarthCanvas() {
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
+  const controlsRef = useRef<React.ComponentRef<typeof OrbitControls>>(null);
 
   function handlePointerDown(e: ThreeEvent<PointerEvent>) {
     pointerDownRef.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
@@ -74,7 +110,9 @@ export default function EarthCanvas() {
           <GlobeMarker />
           <AtmosphereGlow />
         </Suspense>
+        <CameraAnimator controlsRef={controlsRef} />
         <OrbitControls
+          ref={controlsRef}
           enableZoom
           enablePan={false}
           minDistance={1.25}

@@ -29,7 +29,7 @@ function formatIcePct(slr: number): string {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
-export default function Interface() {
+export default function ClimatePanel() {
   const { tempDiff, timeFrame, slr, seaSeason, setTempDiff, setTimeFrame, setSeaSeason } =
     useClimateStore();
   const [opened, { toggle }] = useDisclosure(true);
@@ -77,7 +77,7 @@ export default function Interface() {
 
       <Collapse in={opened}>
         <Stack gap="lg">
-          <Box>
+          <Stack gap={6}>
             <Group justify="space-between" mb={4}>
               <Text size="sm" fw={500}>Temperature</Text>
               <Text size="sm" c="dimmed">
@@ -90,6 +90,7 @@ export default function Interface() {
               onChange={setTempDiff}
               min={-40}
               max={40}
+              domain={[-50, 50]}
               step={0.1}
               marks={[
                 { value: -40, label: "-40°C" },
@@ -98,9 +99,9 @@ export default function Interface() {
               ]}
               color={tempDiff > 0 ? "red" : tempDiff < 0 ? "blue" : "gray"}
             />
-          </Box>
+          </Stack>
 
-          <Box>
+          <Stack gap={6}>
             <Group justify="space-between" mb={4}>
               <Text size="sm" fw={500}>Timeframe</Text>
               <Text size="sm" c="dimmed">
@@ -113,6 +114,7 @@ export default function Interface() {
               onChange={(v) => setTimeFrame(sliderToYears(v))}
               min={0}
               max={1000}
+              domain={[-100, 1100]}
               step={1}
               label={(v) => `${sliderToYears(v).toLocaleString()}yr`}
               marks={[
@@ -123,7 +125,7 @@ export default function Interface() {
               ]}
               color="teal"
             />
-          </Box>
+          </Stack>
 
           <Stack gap={6} bg="dark.9" p="md" style={{ borderRadius: "var(--mantine-radius-sm)" }}>
             <Group justify="space-between">

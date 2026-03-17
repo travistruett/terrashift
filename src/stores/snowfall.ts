@@ -9,7 +9,10 @@ interface SnowfallState {
   loading: boolean;
   error: string | null;
   requestId: number;
+  flyTo: { lat: number; lng: number } | null;
   setPin: (lat: number, lng: number) => void;
+  setFlyTo: (lat: number, lng: number) => void;
+  clearFlyTo: () => void;
   fetchBaseline: (lat: number, lng: number) => Promise<void>;
   clear: () => void;
 }
@@ -22,6 +25,10 @@ export const useSnowfallStore = create<SnowfallState>((set, get) => ({
   loading: false,
   error: null,
   requestId: 0,
+  flyTo: null,
+
+  setFlyTo: (lat: number, lng: number) => set({ flyTo: { lat, lng } }),
+  clearFlyTo: () => set({ flyTo: null }),
 
   setPin: (lat: number, lng: number) => {
     set((state) => ({

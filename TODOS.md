@@ -12,12 +12,3 @@ Move textures from /public/ to Cloudflare R2 or similar free CDN if Vercel bandw
 becomes a concern. The RGBA ice texture is now ~15MB (was ~2MB as grayscale).
 Architecture supports this — just swap URL strings. R2 offers 10GB free egress/month.
 No code changes needed beyond texture paths.
-
-## Higher-Resolution Sea Ice Data
-HadISST is 1° lat/lon (~110km), upscaled to 16K. Could use NSIDC 25km passive
-microwave data for sharper sea ice boundaries. Requires polar stereographic
-reprojection to equirectangular. See docs/algorithm.md Known Limitations.
-
-## Seasonal Sea Ice Toggle
-Currently using September only (Arctic minimum, Antarctic near-maximum). A seasonal
-toggle could show March maximum for dramatically different Arctic coverage.
