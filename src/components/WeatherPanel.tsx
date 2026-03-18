@@ -93,16 +93,25 @@ export default function WeatherPanel() {
 
   const hasData = precipDist.length > 0;
 
-  // Snowfall projection (unchanged model)
+  // Snowfall projection
   const modelBaseline = hasData ? computeSnowfall(precipDist, 0) : 0;
   const modelProjected = hasData ? computeSnowfall(precipDist, tempDiff) : 0;
-  const changeRatio = modelBaseline > 0 ? modelProjected / modelBaseline : 0;
-  const projectedSnowfallCm = baselineSnowfallCm * changeRatio;
-  const isTrace = baselineSnowfallCm < 0.1;
-  const snowChangePct =
-    baselineSnowfallCm > 0
-      ? ((projectedSnowfallCm - baselineSnowfallCm) / baselineSnowfallCm) * 100
-      : 0;
+  const baselineIsTrace = baselineSnowfallCm < 0.1;
+
+  let projectedSnowfallCm: number;
+  let snowChangePct: number;
+  if (!baselineIsTrace && modelBaseline > 0) {
+    // Ratio approach: calibrate model against ERA5 observed snowfall
+    const changeRatio = modelProjected / modelBaseline;
+    projectedSnowfallCm = baselineSnowfallCm * changeRatio;
+    snowChangePct = ((projectedSnowfallCm - baselineSnowfallCm) / baselineSnowfallCm) * 100;
+  } else {
+    // Absolute approach: no baseline snowfall to calibrate against
+    // 1mm water-equivalent ≈ 1cm snow (standard 10:1 fresh snow density)
+    projectedSnowfallCm = modelProjected;
+    snowChangePct = 0;
+  }
+  const isTrace = baselineIsTrace && projectedSnowfallCm < 0.1;
 
   // Precipitation projection
   // Per-event CC rate (6%/°C) for snowfall bins; energy-budget rate (2%/°C) for
@@ -238,6 +247,18 @@ export default function WeatherPanel() {
               <Text size="sm" c="dimmed" fs="italic">
                 Trace / negligible at this location
               </Text>
+            ) : baselineIsTrace ? (
+              <>
+                <Row label="Projected">
+                  {projectedSnowfallCm.toFixed(1)} cm/yr{" "}
+                  <Text span size="xs" c="dimmed" fw={400}>
+                    ({(projectedSnowfallCm * 0.3937).toFixed(1)} in)
+                  </Text>
+                </Row>
+                <Text size="xs" c="dimmed">
+                  no current snowfall {"\u2014"} model estimate from precipitation data
+                </Text>
+              </>
             ) : (
               <>
                 <Row label="Baseline">
@@ -422,6 +443,12 @@ export default function WeatherPanel() {
                 2. Scale precipitation by Clausius-Clapeyron{"\n"}
                 3. Apply snow fraction at the new temperature{"\n"}
                 4. Sum across all bins
+              </Text>
+              <Text size="sm" c="dimmed" lh={1.6}>
+                For locations with observed snowfall, the model computes a ratio (projected/baseline)
+                and applies it to the ERA5 observed value for calibration. For locations with no
+                current snowfall (e.g., tropical regions under extreme cooling), the model output
+                is used directly{"\u2014"}1mm water-equivalent {"\u2248"} 1cm snow at standard 10:1 density.
               </Text>
 
               <Text size="sm" fw={600}>Snow Fraction (Jennings et al. 2018)</Text>

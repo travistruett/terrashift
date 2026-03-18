@@ -393,14 +393,24 @@ snow_i    = P_scaled × snowFraction(T_shifted)
 modelSnow(ΔT) = Σ snow_i
 ```
 
-The model computes a **ratio** rather than absolute values:
+The model uses two approaches depending on whether the location has observed baseline snowfall:
+
+**Calibrated ratio approach** (baseline ≥ 0.1 cm/yr):
 
 ```
 changeRatio    = modelSnow(ΔT) / modelSnow(0)
 projectedSnow  = observedBaseline × changeRatio
 ```
 
-Where `observedBaseline` is the ERA5 `snowfall_sum` annual average (accurate real-world data). The model's physics drives the direction and magnitude of change; the observed baseline anchors it to reality. This avoids the logistic function's systematic overestimation at warm-margin locations (e.g., Atlanta: model says 12cm, ERA5 observes 4cm).
+Where `observedBaseline` is the ERA5 `snowfall_sum` annual average. The model's physics drives the direction and magnitude of change; the observed baseline anchors it to reality. This avoids the logistic function's systematic overestimation at warm-margin locations (e.g., Atlanta: model says 12cm, ERA5 observes 4cm).
+
+**Absolute approach** (baseline < 0.1 cm/yr — e.g., tropical locations):
+
+```
+projectedSnow  = modelSnow(ΔT)
+```
+
+When there is no observed snowfall to calibrate against (e.g., Florida at −40°C), the model output is used directly. The units work out: mm of water-equivalent ≈ cm of snow at the standard 10:1 fresh snow density ratio. This allows the model to project snowfall at locations where none currently exists.
 
 #### 6.6 Counterintuitive Result Detection
 
@@ -416,7 +426,8 @@ The UI displays contextual HoverCards when results would confuse a layperson:
 | Condition | Handling |
 |-----------|----------|
 | `precipDist` empty (loading) | Panel shows loading overlay |
-| Computed baseline < 0.1 cm | Display "Trace / negligible snowfall" |
+| Baseline < 0.1 cm AND projected < 0.1 cm | Display "Trace / negligible snowfall" |
+| Baseline < 0.1 cm AND projected ≥ 0.1 cm | Absolute model; shows projected only with explanatory note |
 | Ocean click | Shows ERA5 reanalysis for ocean grid cell |
 | Extreme cooling (e.g. -30°C) | Moisture starvation naturally reduces snowfall; HoverCard explains |
 
@@ -509,6 +520,7 @@ A running log of approaches tried, what worked, and what didn't.
 | v2 | **Temperature-binned precipitation distribution** | Server bins 30yr daily precipitation by temperature (70 bins, 1°C). Client iterates bins with logistic snow fraction (Jennings 2018) + symmetric CC (6%/°C). Solves warm-margin, Wisconsin paradox, and DJF-only issues. Eliminates ad-hoc asymmetric moisture rates. |
 | v3 | **Wet-bulb temperature binning + best_match resolution** | Server fetches `relative_humidity_2m_mean`, computes wet-bulb via Stull (2011), bins by wet-bulb instead of dry-bulb. Snow fraction T50 lowered from 1.0°C to 0.5°C (wet-bulb threshold). Switched to `best_match` model (~11km ERA5-Land for temp/humidity, ~25km ERA5 for precip). Improves rain/snow partitioning in dry continental climates and resolution in complex terrain. |
 | v4 | **Rename to WeatherPanel + expand baseline metrics** | Renamed `SnowfallPanel`/`snowfall.ts` to `WeatherPanel`/`weather.ts`. Added `temperature_2m_max` and `temperature_2m_min` to Open-Meteo call. Server now computes avgHighC, avgLowC, totalPrecipMm, avgRH from 30-year daily data. UI shows 4 metric sections (temperature, precipitation, snowfall, humidity). Snowfall projection model unchanged. |
+| v5 | **Absolute fallback for zero-baseline locations** | Ratio model (`projected = baseline × ratio`) can't create snowfall where none exists (0 × anything = 0). Added absolute fallback: when baseline < 0.1 cm, use model output directly (mm water-equiv ≈ cm snow at 10:1 SWE). UI shows projected-only with note when baseline is trace but projected is significant. Fixes Florida at −40°C showing "negligible" despite −11°C avg high. |
 
 ---
 
